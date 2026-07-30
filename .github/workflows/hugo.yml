@@ -34,15 +34,30 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup Hugo
-        uses: peaceiris/actions-hugo@v3
-        with:
-          hugo-version: ${{ env.HUGO_VERSION }}
-          extended: true
+      # Install Hugo directly from upstream releases. The peaceiris/actions-hugo
+      # action is unmaintained and still runs on Node 20, which triggers the
+      # GitHub Actions Node 20 deprecation warning. A direct install avoids
+      # that entirely and pins an exact extended binary.
+      - name: Install Hugo (extended)
+        run: |
+          set -euo pipefail
+          ARCH="linux-amd64"
+          TARBALL="hugo_extended_${HUGO_VERSION}_${ARCH}.tar.gz"
+          DOWNLOAD_URL="https://github.com/gohugoio/hugo/releases/download/v${HUGO_VERSION}/${TARBALL}"
+          curl -fsSL -o "/tmp/${TARBALL}" "${DOWNLOAD_URL}"
+          mkdir -p "${HOME}/.local/bin"
+          tar -xzf "/tmp/${TARBALL}" -C "${HOME}/.local/bin" hugo
+          echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
+          hugo version
 
       - name: Setup Pages
         id: pages
         uses: actions/configure-pages@v5
+        with:
+          # Auto-create the Pages site if it does not exist yet. This fixes
+          # the "Get Pages site failed / Not Found" error on repos that have
+          # not yet enabled Pages in Settings.
+          enablement: true
 
       - name: Build with Hugo
         env:

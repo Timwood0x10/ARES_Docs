@@ -1,16 +1,17 @@
 <aside class="sidebar">
-  <nav class="side-nav">
+  <nav class="side-nav" id="sidebar-nav" aria-label="Section navigation">
     {{ range .Site.Menus.main }}
+    {{- $menuName := .Name -}}
+    {{- $sectionKey := lower $menuName -}}
+    {{- /* Count same-language regular pages that belong to this menu's section. */ -}}
+    {{- $subPages := where $.Site.RegularPages "Section" $sectionKey -}}
+    {{- $subPages := where $subPages "Language.Lang" $.Site.Language.Lang -}}
     <div class="side-nav-section">
       <a href="{{ .URL | relLangURL }}" class="side-nav-heading {{ if $.IsMenuCurrent "main" . }}side-active{{ end }}">{{ .Name }}</a>
-      {{ if eq .Name "Modules" }}
+      {{ if gt (len $subPages) 0 }}
       <ul class="side-nav-list">
-        {{ range $.Site.RegularPages }}
-        {{ if eq .Section "modules" }}
-        {{ if eq $.Site.Language.Lang .Language.Lang }}
+        {{ range $subPages.ByWeight }}
         <li><a href="{{ .RelPermalink }}" {{ if eq $.RelPermalink .RelPermalink }}class="side-active"{{ end }}>{{ .Title }}</a></li>
-        {{ end }}
-        {{ end }}
         {{ end }}
       </ul>
       {{ end }}

@@ -8,7 +8,7 @@
   <ul class="module-list">
     {{ range .Pages.ByWeight }}
     <li class="module-list-item">
-      <a href="{{ .RelPermalink }}"><strong>{{ .Title }}</strong></a>
+      <a class="module-card-link" href="{{ .RelPermalink }}"><strong>{{ .Title }}</strong></a>
       {{ with .Params.description }}<p>{{ . }}</p>{{ end }}
       {{ with .Params.maturity }}{{ partial "maturity-badge.html" (dict "level" .) }}{{ end }}
     </li>

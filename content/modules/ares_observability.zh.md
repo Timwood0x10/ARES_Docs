@@ -23,18 +23,22 @@ maturity: "Beta"
 
 ```mermaid
 flowchart TD
-    Caller[Agent / Evolution / MCP] --> T[Tracer interface]
-    T --> OTel[OTelTracer<br/>spans + Metrics]
-    T --> Log[LogTracer<br/>slog]
-    T --> Noop[NoopTracer<br/>trace ID only]
-    OTel --> Meter[metric.Meter]
-    Meter --> M[Metrics counters/histograms]
-    OTel --> SpanExp[SpanExporter]
-    Prom[PrometheusMetrics] --> Reg[default registry]
-    Reg --> HTTP[/metrics endpoint]
-    Cost[CostTracker] --> Pricing[PricingConfig]
-    Pricing --> Entries[CostEntry list]
-    Entries --> Report[Markdown Report]
+    Caller["Agent / Evolution / MCP"] --> T["Tracer interface"]
+
+    T --> OTel["OTelTracer<br/>spans + Metrics"]
+    T --> Log["LogTracer<br/>slog"]
+    T --> Noop["NoopTracer<br/>trace ID only"]
+
+    OTel --> Meter["metric.Meter"]
+    Meter --> M["Metrics counters/histograms"]
+    OTel --> SpanExp["SpanExporter"]
+
+    Prom["PrometheusMetrics"] --> Reg["default registry"]
+    Reg --> HTTP["/metrics endpoint"]
+
+    Cost["CostTracker"] --> Pricing["PricingConfig"]
+    Pricing --> Entries["CostEntry list"]
+    Entries --> Report["Markdown Report"]
 ```
 
 `Tracer` 是中心抽象。`OTelTracer` 构造一对 tracer 与 meter provider,构建

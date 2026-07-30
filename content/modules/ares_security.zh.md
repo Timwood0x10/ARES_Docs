@@ -22,28 +22,28 @@ JSON、对每个字符串值脱敏、再重新序列化,因此 JSON 结构不会
 
 ```mermaid
 flowchart TD
-    Input[String / JSON input] --> S[Sanitizer]
-    S --> Patterns[defaultSensitivePatterns]
-    Patterns --> P1[api_key]
-    Patterns --> P2[password]
-    Patterns --> P3[token]
-    Patterns --> P4[email]
-    Patterns --> P5[phone]
-    Patterns --> P6[credit_card]
-    Patterns --> P7[ssn]
-    P1 --> Mask1[maskAPIKey]
-    P2 --> Mask2[maskPassword]
-    P3 --> Mask3[maskToken]
-    P4 --> Mask4[maskEmail]
-    P5 --> Mask5[maskPhone]
-    P6 --> Mask6[maskCreditCard]
-    P7 --> Mask7[maskSSN]
-    S --> Sanitize[Sanitize string]
-    S --> SanitizeJSON[SanitizeJSON: parse -> walk -> reserialize]
-    Sanitize --> Out[Redacted string]
+    Input["String / JSON input"] --> S["Sanitizer"]
+    S --> Patterns["defaultSensitivePatterns"]
+    Patterns --> P1["api_key"]
+    Patterns --> P2["password"]
+    Patterns --> P3["token"]
+    Patterns --> P4["email"]
+    Patterns --> P5["phone"]
+    Patterns --> P6["credit_card"]
+    Patterns --> P7["ssn"]
+    P1 --> Mask1["maskAPIKey"]
+    P2 --> Mask2["maskPassword"]
+    P3 --> Mask3["maskToken"]
+    P4 --> Mask4["maskEmail"]
+    P5 --> Mask5["maskPhone"]
+    P6 --> Mask6["maskCreditCard"]
+    P7 --> Mask7["maskSSN"]
+    S --> Sanitize["Sanitize string"]
+    S --> SanitizeJSON["SanitizeJSON: parse -> walk -> reserialize"]
+    Sanitize --> Out["Redacted string"]
     SanitizeJSON --> Out
-    SafeLogger[SafeLogger] --> S
-    SafeLogger --> Underlying[func(string) logger]
+    SafeLogger["SafeLogger"] --> S
+    SafeLogger --> Underlying["func(string) logger"]
 ```
 
 `NewSanitizer` 使用 `DefaultSanitizeOptions`;`NewSanitizerWithOptions` 接受自定义
