@@ -1,0 +1,12 @@
+{{ define "main" }}
+<article class="doc-article">
+  <h1 class="doc-title">{{ .Title }}</h1>
+  {{ with .Params.maturity }}
+  <div class="maturity-row">{{ partial "maturity-badge.html" (dict "level" .) }}</div>
+  {{ end }}
+  {{ .TableOfContents }}
+  <div class="doc-content">
+    {{ .Content }}
+  </div>
+</article>
+{{ end }}

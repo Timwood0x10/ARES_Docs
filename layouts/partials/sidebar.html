@@ -1,0 +1,20 @@
+<aside class="sidebar">
+  <nav class="side-nav">
+    {{ range .Site.Menus.main }}
+    <div class="side-nav-section">
+      <a href="{{ .URL | relLangURL }}" class="side-nav-heading {{ if $.IsMenuCurrent "main" . }}side-active{{ end }}">{{ .Name }}</a>
+      {{ if eq .Name "Modules" }}
+      <ul class="side-nav-list">
+        {{ range $.Site.RegularPages }}
+        {{ if eq .Section "modules" }}
+        {{ if eq $.Site.Language.Lang .Language.Lang }}
+        <li><a href="{{ .RelPermalink }}" {{ if eq $.RelPermalink .RelPermalink }}class="side-active"{{ end }}>{{ .Title }}</a></li>
+        {{ end }}
+        {{ end }}
+        {{ end }}
+      </ul>
+      {{ end }}
+    </div>
+    {{ end }}
+  </nav>
+</aside>

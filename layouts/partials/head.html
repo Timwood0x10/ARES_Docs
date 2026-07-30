@@ -1,0 +1,47 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ block "title" . }}{{ .Title }}{{ if .IsHome }}{{ else }} | {{ .Site.Title }}{{ end }}{{ end }}</title>
+<meta name="description" content="{{ with .Description }}{{ . }}{{ else }}{{ .Site.Params.description }}{{ end }}">
+
+{{ $css := resources.Get "css/main.css" | toCSS | minify | fingerprint }}
+<link rel="stylesheet" href="{{ $css.RelPermalink }}">
+
+<!-- No-FOUC: set theme before CSS paints -->
+<script>
+(function () {
+  var saved = localStorage.getItem('theme');
+  if (!saved) {
+    saved = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+  document.documentElement.setAttribute('data-theme', saved);
+})();
+</script>
+
+<!-- Mermaid diagram rendering -->
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  mermaid.initialize({ startOnLoad: false, theme: isDark ? 'dark' : 'default' });
+  // Hugo renders ```mermaid blocks as <code class="language-mermaid">.
+  // Convert them to <pre class="mermaid"> before calling mermaid.run().
+  document.querySelectorAll('code.language-mermaid').forEach(function (el) {
+    var pre = document.createElement('pre');
+    pre.className = 'mermaid';
+    pre.textContent = el.textContent;
+    el.parentNode.replaceWith(pre);
+  });
+  mermaid.run({ querySelector: '.mermaid' });
+
+  // Theme toggle: persist and reload so Mermaid re-renders with correct theme.
+  var btn = document.getElementById('theme-toggle');
+  if (btn) {
+    btn.addEventListener('click', function () {
+      var current = document.documentElement.getAttribute('data-theme');
+      var next = current === 'dark' ? 'light' : 'dark';
+      localStorage.setItem('theme', next);
+      location.reload();
+    });
+  }
+});
+</script>

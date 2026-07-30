@@ -1,0 +1,19 @@
+{{ define "main" }}
+<section class="doc-listing">
+  <h1 class="doc-title">{{ .Title }}</h1>
+  <div class="doc-content">
+    {{ .Content }}
+  </div>
+  {{ if .Pages }}
+  <ul class="module-list">
+    {{ range .Pages.ByWeight }}
+    <li class="module-list-item">
+      <a href="{{ .RelPermalink }}"><strong>{{ .Title }}</strong></a>
+      {{ with .Params.description }}<p>{{ . }}</p>{{ end }}
+      {{ with .Params.maturity }}{{ partial "maturity-badge.html" (dict "level" .) }}{{ end }}
+    </li>
+    {{ end }}
+  </ul>
+  {{ end }}
+</section>
+{{ end }}

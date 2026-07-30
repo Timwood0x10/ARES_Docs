@@ -1,0 +1,51 @@
+# Hugo configuration for the ARES documentation site.
+# Deployed to GitHub Pages at https://timwood0x10.github.io/ARES/
+baseURL: "https://timwood0x10.github.io/ARES/"
+languageCode: "en-us"
+title: "ARES Docs"
+
+defaultContentLanguage: "en"
+
+languages:
+  en:
+    label: English
+    weight: 1
+    params:
+      description: "ARES — a Go-native, multi-agent runtime with an adaptive knowledge graph"
+  zh:
+    label: 中文
+    weight: 2
+    params:
+      description: "ARES — Go 原生多智能体运行时，含自适应知识图谱"
+
+params:
+  description: "ARES — a Go-native, multi-agent runtime with an adaptive knowledge graph"
+  author: "ARES Contributors"
+  repo: "https://github.com/Timwood0x10/ares"
+
+menus:
+  main:
+    - name: Home
+      url: "/"
+      weight: 1
+    - name: Architecture
+      url: "/architecture/"
+      weight: 2
+    - name: Modules
+      url: "/modules/"
+      weight: 3
+    - name: Guides
+      url: "/guides/"
+      weight: 4
+
+markup:
+  goldmark:
+    renderer:
+      unsafe: true
+  highlight:
+    style: "github-dark"
+    lineNos: false
+    codeFences: true
+    guessSyntax: false
+    tabWidth: 4
+    noClasses: true

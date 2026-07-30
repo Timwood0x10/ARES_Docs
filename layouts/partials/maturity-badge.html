@@ -1,0 +1,11 @@
+{{- $level := .level -}}
+{{- $class := "maturity-beta" -}}
+{{- $label := "Beta" -}}
+{{- if eq (lower $level) "production" -}}
+  {{- $class = "maturity-production" -}}
+  {{- $label = "Production" -}}
+{{- else if eq (lower $level) "experimental" -}}
+  {{- $class = "maturity-experimental" -}}
+  {{- $label = "Experimental" -}}
+{{- end -}}
+<span class="maturity-badge {{ $class }}">{{ $label }}</span>

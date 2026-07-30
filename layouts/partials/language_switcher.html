@@ -1,0 +1,28 @@
+{{- /* Language switcher: links to the current page's translation per language,
+     falling back to that language's home (derived from the home page's
+     translations, so no dependency on the default-content-language config). */ -}}
+{{- if gt (len $.Site.Languages) 1 -}}
+  {{- $homes := dict $.Site.Language.Lang $.Site.Home.RelPermalink -}}
+  {{- range $.Site.Home.Translations -}}
+    {{- $homes = merge $homes (dict .Language.Lang .RelPermalink) -}}
+  {{- end -}}
+  <div class="lang-switcher" role="group" aria-label="{{ i18n `language_label` }}">
+    {{- range $.Site.Languages -}}
+      {{- $lang := .Lang -}}
+      {{- $name := .Label | default (upper $lang) -}}
+      {{- if eq $lang $.Site.Language.Lang -}}
+        <span class="lang-link lang-current" aria-current="true">{{ $name }}</span>
+      {{- else -}}
+        {{- $target := index $homes $lang | default (printf "/%s/" $lang | absURL) -}}
+        {{- with $.Translations -}}
+          {{- range $.Translations -}}
+            {{- if eq .Language.Lang $lang -}}
+              {{- $target = .RelPermalink -}}
+            {{- end -}}
+          {{- end -}}
+        {{- end -}}
+        <a class="lang-link" href="{{ $target }}" hreflang="{{ $lang }}">{{ $name }}</a>
+      {{- end -}}
+    {{- end -}}
+  </div>
+{{- end -}}

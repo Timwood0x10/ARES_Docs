@@ -1,0 +1,14 @@
+{{ define "main" }}
+<section class="home-hero">
+  <h1>ARES</h1>
+  <p class="home-tagline">{{ .Site.Params.description }}</p>
+  <div class="home-actions">
+    <a class="btn-primary" href="{{ "architecture/" | relLangURL }}">{{ i18n "home_architecture" }}</a>
+    <a class="btn-secondary" href="{{ "modules/" | relLangURL }}">{{ i18n "home_modules" }}</a>
+    <a class="btn-secondary" href="{{ "guides/" | relLangURL }}">{{ i18n "home_guides" }}</a>
+  </div>
+</section>
+<section class="home-content">
+  {{ .Content }}
+</section>
+{{ end }}
