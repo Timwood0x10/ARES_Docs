@@ -14,10 +14,10 @@ permissions:
   pages: write
   id-token: write
 
-# Allow one concurrent deployment, do not cancel in-progress runs.
+# Ensure only one deployment runs per branch, cancelling stale runs.
 concurrency:
-  group: pages
-  cancel-in-progress: false
+  group: "pages-${{ github.ref }}"
+  cancel-in-progress: true
 
 defaults:
   run:
