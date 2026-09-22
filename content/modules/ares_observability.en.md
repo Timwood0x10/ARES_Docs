@@ -7,9 +7,14 @@ maturity: "Beta"
 
 # ares_observability
 
+> **Status (verified against the source tree 2026-09):** There is no
+> `internal/ares_observability` directory. The package lives at
+> `internal/runtime/observability` (package `observability`); flight
+> recording is under `internal/runtime/observability/flight`.
+
 ## Responsibility
 
-`ares_observability` provides the observability primitives every ARES subsystem
+The observability package provides the primitives every ARES subsystem
 records through: a `Tracer` interface for LLM calls, tool calls, agent steps,
 and errors; an OpenTelemetry-backed implementation that emits spans and metrics;
 a Prometheus metrics bundle exposed at `/metrics`; a `LogTracer` for development;
@@ -108,7 +113,8 @@ func WithMetricReader(reader sdkmetric.Reader) OTelOption
 - Consumed by the agent runtime, MCP manager, and evolution system to record
   operational telemetry.
 - `PrometheusMetrics` is intended to be mounted on the dashboard or server mux
-  via `RegisterMetricsRouter`.
+  via `RegisterMetricsRouter`. Dashboard HTTP surfaces are under `cmd/ares`
+  plus `internal/introspect`, not a separate dashboard package.
 
 ## Extension points
 
@@ -131,9 +137,9 @@ remain in English in both pages.
 
 ## Maturity
 
-`ares_observability` is covered by `tracer_test.go`, `otel_tracer_test.go`,
-`prometheus_test.go`, `cost_test.go`, and `cost_dashboard_test.go`. The public
-API is functional and tested but still evolving (tracer options, metric
-shapes), so it is marked Beta.
+`internal/runtime/observability` is covered by `tracer_test.go`,
+`otel_tracer_test.go`, `prometheus_test.go`, `cost_test.go`, and
+`cost_dashboard_test.go`. The public API is functional and tested but still
+evolving (tracer options, metric shapes), so it is marked Beta.
 
 {{< maturity "Beta" >}}

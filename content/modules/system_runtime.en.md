@@ -5,10 +5,18 @@ weight: 107
 maturity: "Production"
 ---
 
-The `internal/system_runtime` package (package `system_runtime`) is the
-**System Runtime** control plane that unifies component assembly, dependency
-resolution, lifecycle orchestration, and shutdown coordination across all
-entry points (`serve`, `start`, SDK).
+> **Status (verified 2026-09 against the source tree):** there is no
+> `internal/system_runtime` package. The System Runtime control plane
+> (component registry, dependency-aware orchestration, status snapshots)
+> lives in **`internal/kernel`** (package `kernel`, unified with the former
+> kernelscheduler/kernelctx). Bootstrap wires it via
+> `internal/ares_bootstrap/system_runtime_wiring.go`; kernel pillars join
+> late via `Orchestrator.Adopt`. Source is authoritative.
+
+The System Runtime control plane in `internal/kernel` (package `kernel`) is
+the **System Runtime** control plane that unifies component assembly,
+dependency resolution, lifecycle orchestration, and shutdown coordination
+across all entry points (`serve`, `start`, SDK).
 
 The System Runtime is distinct from `ares_runtime.Manager`, which remains
 the **Agent lifecycle** subsystem. System Runtime owns the broader component
@@ -36,10 +44,10 @@ dependency order.
   must not be silently hidden) and on a detected cycle (the cycle members
   are reported in the error).
 - Orchestrate the lifecycle state machine through the `Orchestrator`:
-  `Constructed → Bound → Started → Ready` on the way up (reverse-
-  topological `Start` so dependencies start first); `Ready → Stopping →
-  Stopped` on the way down (topological `Stop` so dependents stop first);
-  rollback of already-started components on a mid-boot failure.
+  `Constructed → Bound → Started → Ready` on the way up (topological
+  `Start` so dependencies start first); reverse-topological `Shutdown`
+  (dependents stop first); rollback of already-started components on a
+  mid-boot failure; `Adopt` for late kernel-pillar registration.
 - Provide the status snapshot API: `Snapshot` (point-in-time view of all
   component statuses with an aggregated `SnapshotSummary`), `IsReady`
   (true iff all `ModeRequired` components are `Ready`/`Degraded` and none
@@ -55,14 +63,15 @@ flowchart TD
     ORD -- unregistered dep --> L1["fail loud: typo / missing registration"]
     ORD -- cycle --> L2["fail loud: cycle members reported"]
     ORD --> ORC["NewOrchestrator(reg, rootCtx)"]
-    ORC --> UP["Start(ctx) — reverse-topological"]
+    ORC --> UP["Start(ctx) — topological (deps first)"]
     UP --> BND["Bind(ctx, deps) per component<br/>Constructed → Bound"]
     BND --> STR["Start(ctx) per component<br/>Bound → Started"]
     STR --> RDY["Ready(ctx) per component<br/>Started → Ready"]
     RDY -- error / degraded --> FL["Failed / Degraded"]
     BND -- error --> RB["rollback already-started components"]
     STR -- error --> RB
-    UP --> SHD["Shutdown(ctx) — topological"]
+    UP --> LATE["Orchestrator.Adopt — late kernel pillars"]
+    UP --> SHD["Shutdown(ctx) — reverse topological (dependents first)"]
     SHD --> STP["Stop(ctx) per component<br/>Ready → Stopping → Stopped"]
     STP --> WTR["Wait() per component<br/>drain background work"]
     SNAP["Registry.Snapshot()"] --> S["Snapshot{TakenAt, Components, Summary}"]
@@ -74,9 +83,7 @@ flowchart TD
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Declared: Register (declared type)
     [*] --> Constructed: Register (constructed instance)
-    [*] --> Disabled: config gate false
     Constructed --> Bound: Bind() ok
     Constructed --> Failed: Bind() error
     Bound --> Started: Start() ok
@@ -101,7 +108,7 @@ stateDiagram-v2
 ## External interfaces
 
 ```go
-package system_runtime
+package kernel
 
 // --- Component contracts ---
 
@@ -166,13 +173,16 @@ type Orchestrator struct {
     // reg *Registry
     // rootCtx context.Context
     // mu sync.Mutex
-    // started []string
-    // statuses map[string]ComponentStatus
+    // started, stopped bool
 }
 func NewOrchestrator(reg *Registry, rootCtx context.Context) *Orchestrator
-func (o *Orchestrator) Start(ctx context.Context) error          // reverse-topological Bind → Start → Ready
-func (o *Orchestrator) Shutdown(ctx context.Context) error       // topological Stop → Wait
+func (o *Orchestrator) Start(ctx context.Context) error          // topological Bind → Start → Ready (deps first)
+func (o *Orchestrator) Shutdown(ctx context.Context) error       // reverse-topological Stop → Wait (dependents first)
+func (o *Orchestrator) Adopt(ctx context.Context, c Component, mode Mode) error // late registration after Start
 func (o *Orchestrator) Go(fn func() error)                       // managed goroutine with error capture
+func (o *Orchestrator) GoBackground(name string, fn func(ctx context.Context) error)
+func (o *Orchestrator) SetEventSink(store ares_events.EventStore)
+func (o *Orchestrator) Snapshot() Snapshot
 func (o *Orchestrator) RootContext() context.Context
 func (o *Orchestrator) Cancel()
 
@@ -180,8 +190,8 @@ func (o *Orchestrator) Cancel()
 
 type State int
 const (
-    StateDeclared State = iota
-    StateConstructed
+    // Registration hands over a constructed instance (no separate Declared step).
+    StateConstructed State = iota
     StateBound
     StateStarted
     StateReady
@@ -192,7 +202,6 @@ const (
     StateDisabled
 )
 func (s State) String() string
-func (s State) IsTerminal() bool   // Stopped | Disabled | Failed
 func (s State) IsHealthy() bool    // Ready | Degraded
 
 type ComponentStatus struct {
@@ -233,9 +242,10 @@ func (s Snapshot) JSON() ([]byte, error)
 | `Registry.Register` | Declares a component with its mode; rejects nil/typed-nil/empty-name/duplicate. |
 | `Registry.TopologicalOrder` | Kahn's algorithm; dependencies appear before dependents; fail loud on cycle or unregistered dependency. |
 | `Registry.Snapshot` / `Registry.IsReady` | Status snapshot API for diagnostics and monitoring. |
-| `Orchestrator` | Lifecycle orchestrator; reverse-topological Start, topological Stop, rollback on mid-boot failure. |
-| `Orchestrator.Start` | `Constructed → Bound → Started → Ready` per component in reverse-topological order. |
-| `Orchestrator.Shutdown` | `Ready → Stopping → Stopped` per component in topological order, then `Wait` for background drain. |
+| `Orchestrator` | Lifecycle orchestrator; topological Start, reverse-topological Shutdown, rollback on mid-boot failure, `Adopt` for late pillars. |
+| `Orchestrator.Start` | `Constructed → Bound → Started → Ready` per component in topological order (deps first). |
+| `Orchestrator.Shutdown` | Reverse-topological `Stop` → `Wait` so dependents stop first. |
+| `Orchestrator.Adopt` | Late registration after Start (kernel pillars); fails with `ErrShuttingDown` during/after shutdown. |
 | `Orchestrator.Go` | Managed goroutine with error capture for component-owned background work. |
 | `State` / `ComponentStatus` | Lifecycle state machine and per-component status data plane. |
 | `Snapshot` / `SnapshotSummary` | Point-in-time view of all component statuses with aggregated counts. |
@@ -243,15 +253,18 @@ func (s Snapshot) JSON() ([]byte, error)
 ## Module collaboration
 
 - `system_runtime` -> `internal/ares_bootstrap`: Bootstrap is the single
-  assembly root; it registers all components with the System Runtime
-  registry and starts/stops them through the Orchestrator.
-- `system_runtime` -> `internal/taskfabric` / `internal/agentfabric` /
-  `internal/agentipc`: the three Kernel pillars are registered as
-  components and started/stopped in dependency order.
-- `system_runtime` -> `internal/ares_events` / `internal/ares_memory` /
-  `internal/ares_mcp` / `internal/ares_flight` / `internal/ares_evolution`:
-  each is a managed component with declared `Dependencies()` for
-  topological ordering.
+  assembly root; `wireSystemRuntime` registers constructed components and
+  starts/stops them through the Orchestrator.
+- `system_runtime` -> `internal/kernel` (same package): the component
+  registry, orchestrator, mode/state/snapshot types, and the scheduling
+  kernel share package `kernel`.
+- `system_runtime` -> `internal/fabric/task` / `internal/fabric/agent` /
+  `internal/agentipc` / `internal/aresrecovery`: kernel pillars are adopted
+  late via `Orchestrator.Adopt` in `cmd/ares/kernel.go`.
+- `system_runtime` -> `internal/runtime` / `internal/ares_events` /
+  `internal/runtime/memory` / `internal/runtime/protocol/mcp` /
+  `internal/runtime/observability` / evolution: each registered component
+  declares `Dependencies()` for topological ordering.
 - `system_runtime` -> `cmd/ares`: serve, start (monitor-live), and SDK all
   assemble through `ares_bootstrap.Bootstrap`; the System Runtime provides
   the `Snapshot()` API exposed by `ares status`.
@@ -263,9 +276,9 @@ func (s Snapshot) JSON() ([]byte, error)
    `Starter`, `ReadinessChecker`, `Stopper`, `Waiter`); register it via
    `Registry.Register(c, mode)` with the appropriate `Mode`.
 2. **Declare dependencies for topological ordering** via `Dependencies()`;
-   the orchestrator starts dependencies first (reverse-topological) and
-   stops dependents first (topological). An unregistered dependency fails
-   loud at `TopologicalOrder` time.
+   the orchestrator starts dependencies first (topological) and stops
+   dependents first (reverse-topological on Shutdown). An unregistered
+   dependency fails loud at `TopologicalOrder` time.
 3. **Report degraded operation** by implementing `ReadinessChecker` to
    return a non-nil error when a write dependency is missing; the
    orchestrator transitions the component to `StateDegraded` with the
@@ -290,11 +303,12 @@ both files; only the prose differs.
 
 ## Maturity
 
-Production. The package is covered by `orchestrator_test.go`,
-`registry_test.go`, and the closure contract tests
-(`closure_entry_equivalence_test.go`). It implements the component
-lifecycle state machine with dependency-aware topological ordering,
-integrates all ARES subsystems through `ares_bootstrap`, and exposes no
-experimental markers.
+Production. The control plane is covered by `internal/kernel`'s
+`orchestrator_test.go`, `registry_test.go`, related orchestrator tests, and
+`internal/ares_bootstrap`'s `system_runtime_wiring_test.go` plus the
+`closure_entry_equivalence_test.go` contract (build tag `closure`). It
+implements the component lifecycle state machine with dependency-aware
+topological ordering, integrates all ARES subsystems through
+`ares_bootstrap`, and exposes no experimental markers.
 
 {{< maturity "Production" >}}

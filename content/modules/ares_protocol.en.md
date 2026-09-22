@@ -5,7 +5,7 @@ weight: 130
 maturity: "Production"
 ---
 
-The `internal/ares_protocol/ahp` package (package `ahp`) implements the AHP
+The `internal/runtime/protocol/ahp` package (package `ahp`) implements the AHP
 messaging protocol used for inter-agent communication. It provides typed
 messages (`TASK`, `RESULT`, `PROGRESS`, `ACK`, `HEARTBEAT`), a per-agent
 in-memory `MessageQueue` with a `QueueRegistry`, a `Protocol` manager that

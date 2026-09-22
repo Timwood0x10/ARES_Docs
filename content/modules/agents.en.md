@@ -143,7 +143,7 @@ func (s *Service) ListAgents(ctx context.Context, filter *core.AgentFilter) ([]*
 func (s *Service) ExecuteTask(ctx context.Context, task *core.Task) (*core.TaskResult, error)
 func (s *Service) GetTaskResult(ctx context.Context, taskID string) (*core.TaskResult, error)
 
-// internal/agents/leader
+// internal/agents (sub: base, lease, outputguard, peer, sub)
 type Agent interface{ base.Agent }
 
 type ProfileParser interface {
@@ -230,7 +230,7 @@ func NewToolBinder() ToolBinder
 
 type FallbackHandler func(ctx context.Context, task *models.Task) ([]*models.RecommendItem, string, error)
 type ChatClient interface {
-    Chat(ctx context.Context, messages []*core.LLMMessage, tools []core.Tool, params map[string]any) (*core.GenerateResponse, error)
+    Chat(ctx context.Context, messages []*llmcore.LLMMessage, tools []llmcore.Tool, params map[string]any) (*llmcore.GenerateResponse, error)
 }
 
 func New(
@@ -255,19 +255,19 @@ func DefaultSubAgentConfig(agentType models.AgentType) *SubAgentConfig
 
 func NewTaskExecutor(
     toolBinder ToolBinder,
-    llmAdapter output.LLMAdapter,
-    template *output.TemplateEngine,
+    llmAdapter llmservice client (post-F-07),
+    template *(removed: output package),
     promptTpl string,
-    validator *output.Validator,
+    validator *(removed: output package),
     maxRetries int,
     opts ...TaskExecutorOption,
 ) TaskExecutor
 func NewTaskExecutorWithValidation(
     toolBinder ToolBinder,
-    llmAdapter output.LLMAdapter,
-    template *output.TemplateEngine,
+    llmAdapter llmservice client (post-F-07),
+    template *(removed: output package),
     promptTpl string,
-    validator *output.Validator,
+    validator *(removed: output package),
     maxRetries int,
     retryOnFail bool,
     strictMode bool,
@@ -310,11 +310,11 @@ const leader.DefaultEventChanSize = 64
 ## Module collaboration
 
 - `agents/base` -> `internal/core/models` for `AgentType` / `AgentStatus` and
-  `internal/ares_protocol/ahp` for `AHPMessage`.
+  `internal/runtime/protocol/ahp` for `AHPMessage`.
 - `leader` -> `base`, `ahp` (`MessageQueue`, `HeartbeatMonitor`),
   `ares_memory`, `ares_events`, `ares_callbacks`, `ares_experience`
   (`FeedbackService`), and `agents` (`StrategySource`).
-- `sub` -> `base`, `ahp`, `ares_events`, `internal/llm/output`
+- `sub` -> `base`, `ahp`, `ares_events`, `internal/llmcore` (post-F-07)
   (`LLMAdapter`, `TemplateEngine`, `Validator`), `internal/tools/resources/core`
   (`Registry`, `ToolSchema`, `Result`), and `agents` (`StrategySource`).
 - `sub.taskExecutor` -> `core` (`LLMMessage`, `Tool`, `GenerateResponse`) and
@@ -366,5 +366,17 @@ Production. The leader, sub, and base packages are covered by
 `checkpoint_test.go`, and the sub-agent test suite. They are integrated into
 the runtime via `ares_runtime` and the SDK, implement resurrection through
 `StatefulAgent`, and expose no experimental markers.
+
+
+## Stale-signature correction (0.4)
+
+Earlier revisions of this page referenced `internal/llmcore` (post-F-07) types
+(`llmservice client (post-F-07)`, `(removed: output package)`, `(removed: output package)`) in
+`sub.NewTaskExecutor` and listed `internal/llmcore` (post-F-07) as a `sub` dependency.
+That package was deleted in full (zero production callers, F-07). Current
+production wiring: LLM access flows through `internal/llm` (`Client` /
+`FailoverClient`) and `llmservice.Service`; tool-calling types are
+`llmcore.*`. Consult the source for the live `sub.NewTaskExecutor` signature
+rather than any historical snippet on this page.
 
 {{< maturity "Production" >}}

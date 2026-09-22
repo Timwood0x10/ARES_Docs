@@ -6,9 +6,9 @@ maturity: "Production"
 ---
 
 The `ares_mcp` module connects ARES to external Model Context Protocol
-servers. `internal/ares_mcp` owns the JSON-RPC client, multi-server
+servers. `internal/runtime/protocol/mcp` owns the JSON-RPC client, multi-server
 manager, stdio/SSE transports, and the tool adapter that registers remote
-tools into the internal `core.Registry`. `api/mcp` ships a self-contained
+tools into the internal `core.Registry`. `internal/mcpclient` ships a self-contained
 client with zero `internal/` dependencies for embedders that only need MCP
 access.
 
@@ -25,7 +25,7 @@ access.
 - Adapt each remote tool to `core.Tool` via `MCPTool` so the planner and
   agent loop can invoke them like builtins.
 - Expose `MCPToolFactory` for config-driven tool creation and the
-  self-contained `api/mcp.Client` for embedders.
+  self-contained `internal/mcpclient.Client` for embedders.
 
 ## Architecture
 
@@ -54,7 +54,7 @@ flowchart TD
 ## External interfaces
 
 ```go
-// internal/ares_mcp
+// internal/runtime/protocol/mcp
 type Transport interface {
     Start(ctx context.Context) error
     Send(ctx context.Context, msg *JSONRPCMessage) error
@@ -197,8 +197,8 @@ func WithMCP(conn MCPConn) Option
 | `MCPTool` | `NewMCPTool(client, def)` | Adapter: makes a remote tool behave as `core.Tool`. |
 | `MCPTool` | `Execute(ctx, params)` | Calls `MCPClient.CallTool`, extracts text from content blocks. |
 | `MCPToolFactory` | `Create(config)` | Config-driven tool creation; implements `core.ToolFactory`. |
-| `api/mcp.Client` | `ConnectFromConfig(ctx, ServerConfig)` | Self-contained client for embedders (no `internal/`). |
-| `api/mcp.Client` | `ListTools` / `CallTool` / `Close` | Minimal MCP surface for direct use. |
+| `internal/mcpclient.Client` | `ConnectFromConfig(ctx, ServerConfig)` | Self-contained client for embedders (no `internal/`). |
+| `internal/mcpclient.Client` | `ListTools` / `CallTool` / `Close` | Minimal MCP surface for direct use. |
 | `api/mcp.DiscoverServers` | function | Scan a project dir for MCP server configs. |
 | `sdk.MCPConn` | fields `Name`, `Command`, `Args` | SDK option payload for `sdk.WithMCP`. |
 | `sdk.WithMCP` | function | Append an MCP server connection to the runtime. |
@@ -225,7 +225,7 @@ func WithMCP(conn MCPConn) Option
   args, env, transport type) and returns the changed server names so the
   runtime can reconnect selectively; `config_watcher.go` can drive this
   from a file watcher.
-- `api/mcp.Client` is the escape hatch for embedders who only need MCP: it
+- `internal/mcpclient.Client` is the escape hatch for embedders who only need MCP: it
   implements the JSON-RPC envelope locally (`jsonrpcRequest`/
   `jsonrpcResponse`), supports `ConnectFromConfig` and `DiscoverServers`,
   and has no `internal/` imports.
@@ -264,7 +264,7 @@ are kept verbatim across both languages; prose is translated.
 Production. The module is covered by `client_test.go`, `manager_test.go`,
 `mcp_tool_test.go`, `schema_test.go`, `transport_test.go`,
 `transport_server_test.go`, `server_test.go`, `config_watcher_test.go`,
-`jsonrpc_test.go`, and `api/mcp/mcp_test.go`, is integrated into the SDK
+`jsonrpc_test.go`, and none (client moved to `internal/mcpclient`), is integrated into the SDK
 via `sdk.WithMCP`/`MCPConn`, and ships no experimental markers.
 
 {{< maturity "Production" >}}

@@ -5,11 +5,17 @@ weight: 110
 maturity: "Production"
 ---
 
-`internal/taskfabric` 包（包名 `taskfabric`）是 ARES Kernel 的 **Task
+> **状态（2026-09 对照源码树核实）：** 包位于 `internal/fabric/task`
+> （包名仍为 `taskfabric`；自 `internal/taskfabric` 迁出）。`AgentQueue` /
+> `Steal` 已作为未使用代码删除——调度经 `internal/kernel` 的共享
+> `ReadyTasks()` 路径排空。`CheckExpiredLeases` 返回 `[]string`（重排队的
+> 任务 ID），`Fail` 带尾参 `cause error`。以源码为准。
+
+`internal/fabric/task` 包（包名 `taskfabric`）是 ARES Kernel 的 **Task
 Scheduler** 支柱。它持有持久化意图对象模型（`Task`）、租约 fencing 状态机
 （`Acquire` / `Start` / `Yield` / `Preempt` / `Complete` / `Fail`）、执行
-quantum 原语（`RunQuantum`），以及能力感知的工作窃取基底（`AgentQueue`、
-`Steal`、`Schedule`、`Score`）。
+quantum 原语（`RunQuantum`），以及能力感知评分（`Schedule`、`Score`、
+`ScoreBreakdown`、`Pick`）。
 
 核心不变量是 **Agent 死亡 ≠ Task 死亡**：`Task` 是 durable 的，通过租约过期
 与保留的 checkpoint 在 owner 死亡后存活；执行它的 `Agent` 则是 disposable 的。
@@ -31,13 +37,13 @@ quantum 原语（`RunQuantum`），以及能力感知的工作窃取基底（`Ag
   `done → COMPLETED`、`err → FAILED`、否则 `Yield` 到 SUSPENDED 并保留 checkpoint。
 - 提供能力感知调度：`Score = capability_overlap × (1 − load) × confidence ×
   (1 + priority)`；`Schedule` 选出最佳合格 candidate 并代为 acquire 任务。
-- 提供能力感知的工作窃取：每 agent 一个 `AgentQueue`，`Steal(from,
-  capabilities, capabilityOf)` 使空闲 agent 只窃取自己有能力执行的任务——
-  "谁是最佳执行者"，而非"谁空闲"。
-- 通过 `CheckExpiredLeases` 回收过期租约——崩溃恢复原语，将死亡 agent 的
-  LEASED/RUNNING/SUSPENDED 任务归还 READY。
-- 发射完整的任务生命周期事件日志（`task.created` … `task.stolen`），可选地
-  持久化到 `ares_events.EventStore`；该日志是单一事实源，可据此重建
+  `ScoreBreakdown` 暴露因子分解供 decision recorder 使用；当所有评分均为零
+  时 `Pick` 回退到仅按 capability overlap 排序。
+- 通过 `CheckExpiredLeases`（返回重排队的任务 ID）回收过期租约——崩溃恢复
+  原语，将死亡 agent 的 LEASED/RUNNING/SUSPENDED 任务归还 READY。
+- 发射完整的任务生命周期事件日志（`task.created` … `task.expired`，另有
+  tombstone `task.deleted` 与仅观测用 `task.updated`），可选地持久化到
+  `ares_events.EventStore`；该日志是单一事实源，可据此重建
   Scheduler / Task / Lease 状态。
 
 ## 架构图
@@ -59,9 +65,7 @@ flowchart TD
     STEP -- err --> FL["Fabric.Fail<br/>→ FAILED or requeue READY"]
     STEP -- !done --> YL["Fabric.Yield<br/>→ SUSPENDED, checkpoint preserved"]
     PRM["Fabric.Preempt<br/>cooperative, quantum boundary"] --> RDY["transition StateReady<br/>Owner=\"\" Lease=nil"]
-    EXP["Fabric.CheckExpiredLeases"] --> RQ2["expired LEASED/RUNNING/SUSPENDED<br/>→ READY (Agent 死亡 ≠ Task 死亡)"]
-    STL["AgentQueue.Steal<br/>from, capabilities, capabilityOf"] --> SKP["skip incapable tasks"]
-    SKP --> STLN["return stolen taskID"]
+    EXP["Fabric.CheckExpiredLeases<br/>returns requeued IDs"] --> RQ2["expired LEASED/RUNNING/SUSPENDED<br/>→ READY (Agent 死亡 ≠ Task 死亡)"]
     REC["Fabric.record"] --> EV["TaskEvent log"]
     EV --> ES["ares_events.EventStore<br/>task.* (best-effort)"]
 ```
@@ -108,12 +112,13 @@ func (f *Fabric) Acquire(id, agentID string, ttl time.Duration) (uint64, error)
 func (f *Fabric) Start(id, agentID string, epoch uint64) error
 func (f *Fabric) Yield(id, agentID string, epoch uint64, checkpoint any) error
 func (f *Fabric) Complete(id, agentID string, epoch uint64) error
-func (f *Fabric) Fail(id, agentID string, epoch uint64) error
+func (f *Fabric) Fail(id, agentID string, epoch uint64, cause error) error
 func (f *Fabric) Release(id, agentID string, epoch uint64) error
 func (f *Fabric) Preempt(taskID, agentID string, epoch uint64, reason string) error
 
 // Crash recovery: requeue tasks whose lease expired without renewal.
-func (f *Fabric) CheckExpiredLeases() int
+// Returns the requeued task IDs.
+func (f *Fabric) CheckExpiredLeases() []string
 
 // Capability-aware scheduling (design §8).
 func (f *Fabric) Schedule(taskID string, candidates []Candidate, ttl time.Duration) (string, uint64, error)
@@ -175,6 +180,7 @@ type Candidate struct {
     Priority     float64         // >= 0; 0 = normal; OS-thread-priority analog
 }
 func Score(taskCapability string, c Candidate) float64
+func ScoreBreakdown(taskCapability string, c Candidate) ScoreParts
 func Pick(taskCapability string, candidates []Candidate) *Candidate
 
 type ConfidenceSource interface {
@@ -182,17 +188,6 @@ type ConfidenceSource interface {
     // 0 means "no experience yet" — the candidate keeps its declared confidence.
     Confidence(taskPattern string) float64
 }
-
-// --- Work stealing ---
-
-type AgentQueue struct {
-    AgentID string
-    // mu guards tasks
-}
-func NewAgentQueue(agentID string) *AgentQueue
-func (q *AgentQueue) Enqueue(taskID string)
-func (q *AgentQueue) Len() int
-func (q *AgentQueue) Steal(from *AgentQueue, capabilities []string, capabilityOf func(string) string) (string, bool)
 
 // --- Event log ---
 
@@ -209,7 +204,8 @@ const (
     EventTaskCompleted    EventType = "task.completed"
     EventTaskFailed       EventType = "task.failed"
     EventTaskExpired      EventType = "task.expired"
-    EventTaskStolen       EventType = "task.stolen"
+    EventTaskDeleted      EventType = "task.deleted"
+    EventTaskUpdated      EventType = "task.updated"
 )
 type TaskEvent struct {
     Type       EventType
@@ -249,26 +245,28 @@ var (
 | `Fabric.CheckExpiredLeases` | 崩溃恢复原语：回收所有租约过期但未续约的任务（Agent 死亡 ≠ Task 死亡）。 |
 | `Fabric.Schedule` | 能力感知派发：为 candidates 评分，选出最佳合格者并代为 acquire 任务。 |
 | `Fabric.RunQuantum` | 单次执行 quantum：`Start → step → {Complete | Fail | Yield}`。 |
-| `Score` / `Pick` | 能力感知评分函数与其 argmax 选择器。 |
+| `Score` / `ScoreBreakdown` / `Pick` | 能力感知评分函数、其因子分解，以及 argmax 选择器（含仅按 overlap 的末位回退）。 |
 | `Candidate` | 调度器的每 agent 输入：capabilities、load、confidence、priority。 |
 | `Lease` | 基于 TTL 的所有权租约，含 fencing `Epoch`；同一形状复用于 `TaskLease` / `ResourceLease` / `CapabilityLease`。 |
 | `TaskEvent` / `Events` | 不可变生命周期事件日志；按序回放即可重建完整任务状态。 |
-| `AgentQueue` / `Steal` | 每 agent 的 ready-queue 与能力感知窃取。 |
 | `ConfidenceSource` | 喂给调度器 `confidence` 项的经验先验适配器。 |
 
 ## 模块协作
 
 - `taskfabric` -> `internal/ares_events`：可选 `EventStore`，用于 best-effort
   持久化 `task.*` 生命周期事件；进程内日志仍是权威源。
-- `taskfabric` -> `internal/ares_skills`（经 `ConfidenceSource`）：Experience
+- `taskfabric` -> `internal/runtime/protocol/skills` / knowledge skills（经
+  `ConfidenceSource`）：Experience
   的 `BestMatch` `SuccessRate` 是喂给 `Score` `confidence` 项的天然先验。
-- `taskfabric` -> `internal/agentfabric`：Scheduler 在 `agentfabric.Agent`
+- `taskfabric` -> `internal/fabric/agent`：调度器在 `agentfabric.Agent`
   实例间挑选；`Agent.Capabilities` / `Load` / `Confidence` / `Priority` 填入
   `Candidate`。
-- `taskfabric` -> `internal/agentipc`：被窃取或交接的任务的新 owner 通过
-  IPC 总线收到通知。
-- `taskfabric` -> `internal/system_runtime`：Fabric 作为组件被注册，由
-  Orchestrator 启停。
+- `taskfabric` -> `internal/kernel`：内核调度器经 `ReadyTasks` →
+  `Schedule` → `Acquire` → `RunQuantum` 排空 READY 任务；`ScoreBreakdown`
+  喂给 decision recorder。
+- `taskfabric` -> `internal/kernel`（System Runtime 控制面）：Fabric 经
+  `Orchestrator.Adopt` 注册为组件，由 Orchestrator 按逆拓扑顺序停机；接线在
+  `internal/ares_bootstrap/system_runtime_wiring.go` 与 `cmd/ares/kernel.go`。
 
 ## 扩展方式
 
@@ -295,8 +293,9 @@ var (
 ## 成熟度
 
 Production。该包由 `dag_test.go`、`event_store_test.go`、`fabric_test.go`、
-`preempt_test.go`、`quantum_test.go`、`schedule_test.go`、`steal_test.go`、
-`benchmark_test.go` 覆盖。它实现了带租约 fencing 的协同式任务状态机，通过
-`system_runtime` 集成进 ARES Kernel，且不含任何实验性标记。
+`preempt_test.go`、`quantum_test.go`、`schedule_test.go`、`scheduler_test.go`、
+`task_retry_test.go`、restore/lease 测试与 `benchmark_test.go` 覆盖。它实现了
+带租约 fencing 的协同式任务状态机，经 `internal/kernel`（quantum 排空与
+System Runtime 采纳）集成进 ARES Kernel，且不含任何实验性标记。
 
 {{< maturity "Production" >}}

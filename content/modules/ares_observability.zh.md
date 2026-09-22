@@ -7,9 +7,13 @@ maturity: "Beta"
 
 # ares_observability
 
+> **状态（2026-09 对照源码树核实）：** 不存在 `internal/ares_observability`
+> 目录。包位于 `internal/runtime/observability`（包名 `observability`）；
+> flight recorder 在 `internal/runtime/observability/flight`。
+
 ## 职责
 
-`ares_observability` 提供 ARES 各子系统记录可观测性所用的原语:用于 LLM 调用、
+可观测性包提供 ARES 各子系统记录所用的原语:用于 LLM 调用、
 工具调用、agent 步骤与错误的 `Tracer` 接口;发射 span 与指标的 OpenTelemetry 实现;
 在 `/metrics` 暴露的 Prometheus 指标集合;用于开发的 `LogTracer`;只做 trace ID
 传播的 `NoopTracer`;以及按模型累计 LLM 成本(美元)的 `CostTracker`。
@@ -102,6 +106,7 @@ func WithMetricReader(reader sdkmetric.Reader) OTelOption
 - 使用 `internal/logger` 作为包级结构化日志器。
 - 被 agent 运行时、MCP 管理器与进化系统消费,用于记录运行时遥测。
 - `PrometheusMetrics` 旨在通过 `RegisterMetricsRouter` 挂载到仪表盘或服务器 mux。
+  Dashboard HTTP 面在 `cmd/ares` 与 `internal/introspect`,无独立 dashboard 包。
 
 ## 扩展方式
 
@@ -123,7 +128,7 @@ func WithMetricReader(reader sdkmetric.Reader) OTelOption
 
 ## 成熟度
 
-`ares_observability` 由 `tracer_test.go`、`otel_tracer_test.go`、
+`internal/runtime/observability` 由 `tracer_test.go`、`otel_tracer_test.go`、
 `prometheus_test.go`、`cost_test.go` 与 `cost_dashboard_test.go` 覆盖。公共 API
 功能完备且经过测试,但仍在演进(tracer 选项、metric 形状),故标记为 Beta。
 

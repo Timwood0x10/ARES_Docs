@@ -212,7 +212,7 @@ all code blocks, signatures, and identifiers remain in English in both pages.
 
 Experimental. The subsystem is functional and exercised by
 `knowledge_test.go`, `quality_test.go`, `hybrid_test.go`,
-`relation_extract_test.go`, `vector_index_test.go`, `e2e_test.go`, and
+`relation_extract_test.go`, `retriever_test.go`, `e2e_test.go`, and
 `docs_articles_test.go`, but the AKG design notes flag the public API as
 undergoing significant rework. Store backends, quality-gate weights, and
 lifecycle statuses may change between minor versions. Consumers should pin

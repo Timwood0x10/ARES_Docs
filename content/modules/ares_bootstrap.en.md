@@ -111,12 +111,12 @@ func SetAllowedConfigDir(dir string) // re-exported security helper from ares_co
 - Consumes `ares_events`, `ares_runtime`, `ares_memory`, `ares_mcp`,
   `ares_callbacks`, `ares_eval`, `ares_experience`, `ares_flight` for the
   legacy runtime and evolution wiring.
-- Drives the new evolution stack from `internal/evolution`
-  (`coordinator`, `diff`, `genome`, `patch`) and `internal/ares_evolution`
+- Drives the new evolution stack from `internal/runtime/evolution`
+  (`coordinator`, `diff`, `genome`, `patch`) and `internal/runtime/ares_evolution`
   (`service`, `scheduler`, `dream_cycle`, `genome_wiring`).
 - Shares `internal/knowledge/runtime` between the evolution system and the
-  agent's AKF tools, and `internal/workflow/engine` for the live mutable DAG.
-- Optionally wires `internal/evolution/deployment` for safe patch promotion.
+  agent's AKF tools, and `internal/fabric/task/workflow/engine` for the live mutable DAG.
+- Optionally wires `internal/runtime/evolution/deployment` for safe patch promotion.
 
 ## Extension points
 
@@ -148,5 +148,21 @@ names, and signatures remain in English in both pages.
 `callback_injection_test.go`, `strategy_adapter_test.go`, and
 `provide_new_evolution_live_memory_test.go`. It is the wiring entry point used
 by `api/bootstrap` and `cmd/ares serve`, with no experimental markers.
+
+
+## Evolution wiring facts (verified 2026-09)
+
+- `wireGAEvolution` seeds the StrategyStore with base strategy
+  `bootstrap-root` (Score 0.5) only when the store has no active strategy —
+  score write-back and policy-source reads need a target from boot. Existing
+  active strategies are never overwritten.
+- `ProvideNewEvolution` builds the WorkflowGenome with seeded
+  `AgentPool: ["ares/plan","ares/answer"]` (struct-literal configs bypass
+  package defaults; an empty pool used to panic mutation operators).
+- `buildLiveAgentDAG` + `UpdateLiveDAG` register the `agents.peers` topology
+  on the runtime manager and inject it into evolution executors. Serve does
+  NOT compile this live agent DAG into the task fabric: agent topology is not
+  work — compiling it produced READY tasks with non-L2 capabilities that no
+  executor could claim. Session/plan graphs remain the compiled path.
 
 {{< maturity "Production" >}}

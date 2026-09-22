@@ -1,6 +1,6 @@
 ---
 title: "ares_config"
-description: "YAML configuration loading, defaults, environment overrides, and validation for the ARES server."
+description: "YAML configuration loading, defaults, and validation for the ARES server — ares.yaml is the single config entry point."
 weight: 170
 maturity: "Production"
 ---
@@ -10,7 +10,7 @@ maturity: "Production"
 ## Responsibility
 
 `ares_config` owns the entire configuration surface for ARES. It reads a YAML
-file, applies layered defaults, merges environment-variable overrides, and runs
+file, applies layered defaults, and runs
 a section-by-section validation pass before handing a fully populated `Config`
 to the bootstrap layer. It also guards against path-traversal attacks when an
 allowed config directory is configured.
@@ -50,8 +50,8 @@ so opting out keeps those subsystems inert.
 // Load reads configuration from a YAML file, applies defaults, and validates it.
 func Load(path string) (*Config, error)
 
-// LoadFromEnv loads configuration from environment variables (overrides YAML).
-func LoadFromEnv(cfg *Config) error
+// (removed) The env-var override surface (LoadFromEnv / ARES_* variables)
+// was deleted — ares.yaml is the single configuration entry point.
 
 // SetAllowedConfigDir sets the allowed directory for config files (security).
 func SetAllowedConfigDir(dir string)
@@ -124,5 +124,31 @@ in English in both pages.
 `ares_config` is covered by `config_test.go`, `config_closed_loop_test.go`,
 and `archive_config_test.go`. It is integrated into the SDK bootstrap path and
 contains no experimental markers.
+
+
+## External-surface configuration keys (ares.yaml)
+
+All runtime configuration travels through ares.yaml — there is no CLI-flag or
+env config surface.
+
+- `server.default_capability` (default `ares/plan`) — capability used when
+  `POST /api/tasks` omits one. AUDIT-ONLY: execution is normalized to
+  `ares/plan` at the Submitter; this value never routes tasks to a different
+  agent population.
+- `tasks.wait_timeout` (default `60s`) — default sync-wait for
+  `POST /api/tasks?wait=` AND the `ares run` context timeout when set.
+  Hard cap 300s on both surfaces (handler clamps; `ares run` unset default
+  is 120s). Negative/unparseable values are rejected by validation.
+- `security.api_key` — dedicated HTTP control-plane credential; takes
+  precedence over `llm.api_key`. Both empty → write gate answers 401 (loopback
+  included). `ares init` generates a random value into the project template
+  (ares.yaml written mode 0600). Redacted in `Config.Redacted()`.
+- `tools.file_sandbox_dir` — workspace root the file_tools sandbox allows
+  agents to read/write. Empty (default) falls back to a process-PRIVATE temp
+  dir — agents cannot touch the served repo/workspace until this is set.
+- `evolution.llm_scoring.{enabled,seed,max_calls_per_generation}` and
+  `evolution.shadow.{min_samples,min_win_rate,replay_window_span,replay_query_limit}`
+  gate the GA evidence path (see the ares_evolution module page for verdict
+  semantics).
 
 {{< maturity "Production" >}}

@@ -6,8 +6,8 @@ maturity: "Production"
 ---
 
 `ares_mcp` 模块将 ARES 连接到外部 Model Context Protocol 服务器。
-`internal/ares_mcp` 持有 JSON-RPC 客户端、多服务器管理器、stdio/SSE 传输，
-以及把远端工具注册进内部 `core.Registry` 的工具适配器。`api/mcp` 提供零
+`internal/runtime/protocol/mcp` 持有 JSON-RPC 客户端、多服务器管理器、stdio/SSE 传输，
+以及把远端工具注册进内部 `core.Registry` 的工具适配器。`internal/mcpclient` 提供零
 `internal/` 依赖的自包含客户端，供仅需 MCP 访问的嵌入者使用。
 
 ## 职责
@@ -21,7 +21,7 @@ maturity: "Production"
 - 通过 `MCPTool` 把每个远端工具适配为 `core.Tool`，使 planner 与 agent
   循环能像内置工具一样调用它们。
 - 暴露用于配置驱动工具创建的 `MCPToolFactory`，以及面向嵌入者的自包含
-  `api/mcp.Client`。
+  `internal/mcpclient.Client`。
 
 ## 架构图
 
@@ -50,7 +50,7 @@ flowchart TD
 ## 外部接口
 
 ```go
-// internal/ares_mcp
+// internal/runtime/protocol/mcp
 type Transport interface {
     Start(ctx context.Context) error
     Send(ctx context.Context, msg *JSONRPCMessage) error
@@ -193,8 +193,8 @@ func WithMCP(conn MCPConn) Option
 | `MCPTool` | `NewMCPTool(client, def)` | 适配器：让远端工具表现为 `core.Tool`。 |
 | `MCPTool` | `Execute(ctx, params)` | 调用 `MCPClient.CallTool`，从 content block 抽取文本。 |
 | `MCPToolFactory` | `Create(config)` | 配置驱动的工具创建；实现 `core.ToolFactory`。 |
-| `api/mcp.Client` | `ConnectFromConfig(ctx, ServerConfig)` | 面向嵌入者的自包含客户端（无 `internal/`）。 |
-| `api/mcp.Client` | `ListTools` / `CallTool` / `Close` | 直连使用的最小 MCP 表面。 |
+| `internal/mcpclient.Client` | `ConnectFromConfig(ctx, ServerConfig)` | 面向嵌入者的自包含客户端（无 `internal/`）。 |
+| `internal/mcpclient.Client` | `ListTools` / `CallTool` / `Close` | 直连使用的最小 MCP 表面。 |
 | `api/mcp.DiscoverServers` | 函数 | 扫描项目目录寻找 MCP 服务器配置。 |
 | `sdk.MCPConn` | 字段 `Name`、`Command`、`Args` | `sdk.WithMCP` 的 SDK 选项载荷。 |
 | `sdk.WithMCP` | 函数 | 向运行时追加一个 MCP 服务器连接。 |
@@ -219,7 +219,7 @@ func WithMCP(conn MCPConn) Option
 - `MCPManager.ApplyConfig` 对比新旧 `MCPServerConfig`（command、args、env、
   transport type），返回变更服务器名列表，便于运行时选择性重连；
   `config_watcher.go` 可由文件监听驱动该流程。
-- `api/mcp.Client` 是仅需 MCP 的嵌入者的逃生口：本地实现 JSON-RPC 封装
+- `internal/mcpclient.Client` 是仅需 MCP 的嵌入者的逃生口：本地实现 JSON-RPC 封装
   （`jsonrpcRequest`/`jsonrpcResponse`），支持 `ConnectFromConfig` 与
   `DiscoverServers`，且无任何 `internal/` 依赖。
 
@@ -252,7 +252,7 @@ func WithMCP(conn MCPConn) Option
 Production。本模块由 `client_test.go`、`manager_test.go`、
 `mcp_tool_test.go`、`schema_test.go`、`transport_test.go`、
 `transport_server_test.go`、`server_test.go`、`config_watcher_test.go`、
-`jsonrpc_test.go`、`api/mcp/mcp_test.go` 覆盖，已通过
+`jsonrpc_test.go`、none (client moved to `internal/mcpclient`) 覆盖，已通过
 `sdk.WithMCP`/`MCPConn` 接入 SDK，无任何实验性标记。
 
 {{< maturity "Production" >}}

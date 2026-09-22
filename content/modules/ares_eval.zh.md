@@ -5,7 +5,7 @@ weight: 220
 maturity: "Beta"
 ---
 
-`internal/ares_eval` 包是 ARES 的评估与基准框架。它加载测试套件，针对
+`internal/runtime/eval` 包是 ARES 的评估与基准框架。它加载测试套件，针对
 agent 运行，用可插拔评估器（精确匹配、关键词存在、工具使用、LLM-as-Judge、
 维度感知 Judge）打分，并产出 Markdown/JSON 报告。`service` 子包提供 HTTP
 友好的 API，背后是 PostgreSQL 持久化。
@@ -59,7 +59,7 @@ flowchart TD
 ## 外部接口
 
 ```go
-// internal/ares_eval
+// internal/runtime/eval
 type Duration time.Duration  // YAML/JSON-unmarshalable duration
 
 type TestCase struct {
@@ -211,7 +211,7 @@ func (g *ReportGenerator) GenerateJSON(suite TestSuite, results []TestResult, sc
 func (g *ReportGenerator) SaveReport(path string, content string) error
 func RunEvaluation(ctx context.Context, loader *Loader, runner TestRunner, evaluator Evaluator, suitePath string) ([]TestResult, [][]EvalScore, error)
 
-// internal/ares_eval/service
+// internal/runtime/eval/service
 type Service struct { /* unexported */ }
 type Option func(*Service)
 func WithAgentExecutor(exec ares_eval.AgentExecutor) Option
@@ -337,7 +337,7 @@ func (h *Handler) HandleGetComparison(w http.ResponseWriter, r *http.Request)
 5. **持久化到 PostgreSQL。** 实现 `EvalResultRepository`（或用
    `NewPGEvalResultRepository`），构造
    `service.NewService(repo, WithAgentExecutor(exec))`，通过
-   `service.NewHandler(svc)` 暴露。在 `api/router` 中把 handler 路由挂到
+   `service.NewHandler(svc)` 暴露。在 `cmd/ares` 中把 handler 路由挂到
    `/api/v1/eval/...`。
 6. **从套件文件跑端到端。** 调用
    `RunEvaluation(ctx, NewLoader(), runner, evaluator, "suite.yaml")` 一步

@@ -1,9 +1,15 @@
 ---
 title: "api"
 description: "Public HTTP and library entry points that wire every ARES module into a single runtime."
-weight: 110
+weight: 115
 maturity: "Production"
 ---
+
+> **Status (verified against the source tree 2026-09):** `api/` is a flat package
+> (package `ares`) that re-exports `sdk`'s public API via type aliases; its only
+> subpackage is `api/embedding`. The paths `api/{core,service,bootstrap,router,
+> handler,client,workflow,tools,mcp,tasks,discovery,v1}` do not exist in source.
+> The page below documents the full re-export surface.
 
 The `api` package is the top-level container for ARES. It owns the bootstrap
 factory (`bootstrap.ARES`), the HTTP router with `Register*` methods per
@@ -230,9 +236,42 @@ kept verbatim across both languages; prose is translated.
 
 ## Maturity
 
-Production. The `api` package is the only public surface of ARES, is
+Production. The `api` package is the in-process public surface of ARES;
+the external HTTP task surface for non-Go callers is `ares serve`'s
+cmd/ares route registry (see the External task surface section above).
+The `api` package is
 covered by `bootstrap_test.go`, `router_test.go`, `client_test.go`,
 `handler_test.go`, and `service/*_test.go`, and is integrated into the SDK
 entry points (`sdk.New`) without any experimental markers.
+
+
+## External task surface (ares serve)
+
+The external entry for non-Go callers is `ares serve`'s HTTP task surface
+(dispatched from `cmd/ares`, not from this `api` package):
+
+- `POST /api/tasks` — minimal body `{"query": "..."}`; the query folds into
+  payload keys `input` and `task_desc` (explicit caller values win).
+  `capability` defaults to `server.default_capability`, which is AUDIT-ONLY:
+  the Submitter normalizes every submission to the single L2 capability
+  `ares/plan`; the yaml value never routes to another agent population.
+- `POST /api/tasks?wait=<dur>` — optional sync wait. Default
+  `tasks.wait_timeout` (60s), hard cap 300s (larger → 400). Resolved terminal
+  → 200 with the task view; wait expiry → 202 with `task_id` and the current
+  `state`. Submission never fails because a wait expired.
+- `GET /api/tasks/{task_id}` — slim TaskView (`task_id`, `capability`,
+  `state`, `owner`, `quantum`, `has_checkpoint`, `dependencies`, `origin`,
+  timestamps) plus `result` and `error`. `result` is the session answer
+  (completed answer node `items[0].Content`) falling back to the quantum step
+  checkpoint; `error` carries the failure cause: persisted quantum error
+  (`last_error` on the checkpoint envelope) → cascade/session-answer
+  provenance → "session stalled before an answer landed".
+- **Auth**: the write gate is deny-by-default — POST answers 401 without
+  credentials, loopback included. The read gate (`authRead`) requires a
+  credential once any layer is configured; loopback-open read applies only
+  when no credential layer exists. Credential precedence:
+  `security.api_key` over `llm.api_key`; both empty → write 401.
+  `ares init` generates a random `security.api_key` into the project
+  ares.yaml (file mode 0600).
 
 {{< maturity "Production" >}}

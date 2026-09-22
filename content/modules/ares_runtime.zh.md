@@ -5,11 +5,19 @@ weight: 120
 maturity: "Production"
 ---
 
-`internal/ares_runtime` 包（包名 `ares_runtime`）是智能体的进程级监督者。
+> **状态（2026-09 对照源码树核实）：** 不存在 `internal/ares_runtime` 包。
+> Agent 生命周期管理器位于 **`internal/runtime`**（包名 `runtime`，原
+> `ares_runtime`）。`CheckpointPlugin` / `MemoryPlugin` /
+> `EvolutionPlugin` 及 `CapCheckpoint` / `CapMemory` / `CapEvolution`
+> 能力已删除（C1.3）；`RecoverSnapshotOrEvents` 已移除。后继路径：
+> fabric/task `CheckpointEnvelope`、retriever_wiring、`ares_evolution`
+> 直接消费。以源码为准。
+
+`internal/runtime` 包（包名 `runtime`）是智能体的进程级监督者。
 智能体被视为可丢弃的执行器，runtime 负责其诞生、死亡与复活。`Manager` 实现
 `Runtime` 接口，在受管 goroutine 中运行每个智能体，提供 panic 恢复、周期性健康
-检查，以及由 `AgentFactory` 驱动的指数退避复活。它还暴露了插件总线、检查点存储
-与混沌工程 arena。
+检查，以及由 `AgentFactory` 驱动的指数退避复活。它还暴露了插件总线与混沌工程
+arena。
 
 ## 职责
 
@@ -22,11 +30,12 @@ maturity: "Production"
   快照状态、补充认知记忆状态后重新启动；指数退避（1s 到 30s，最多 5 次）与每智能体
   重启上限共同约束重试。
 - 通过 `SnapshotStore` 对有状态智能体（`base.StatefulAgent`）做快照与恢复，并在
-  关闭时捕获最终快照。
-- 通过 `CheckpointPlugin` 持久化执行检查点（`ExperienceCheckpoint`），用于工作流
-  崩溃恢复。
-- 提供插件契约（`RuntimePlugin`、`WorkflowHook`、`MemoryPlugin`、
-  `EvolutionPlugin`、`RecoveryPlugin`）与 `EventBus` 以供扩展。
+  关闭时捕获最终快照。恢复路径内联为快照优先、事件回放兜底
+ （`RecoverSnapshotOrEvents` 已删除）。
+- 执行检查点经 fabric/task `CheckpointEnvelope` 持久化（runtime 的
+  `CheckpointPlugin` 随 C1.3 删除）。
+- 提供插件契约（`RuntimePlugin`、`WorkflowHook`、`RecoveryPlugin`）与
+  `EventBus` 以供扩展。
 - 暴露混沌工程故障注入（`PauseAgent`、`SlowAgent`、`ToolTimeout`、
   `PartitionNetwork` 等）供 arena 使用。
 
@@ -45,13 +54,13 @@ flowchart TD
     SR --> RA["RestoreAgent"]
     RA --> RC["recoverAgentState"]
     RC --> RPL["replayEvents<br/>EventStore.Read"]
-    RC --> SNAP["RecoverSnapshotOrEvents<br/>SnapshotStore"]
+    RC --> SNAP["snapshot first (inline)<br/>then events"]
     RC --> COG["buildCognitiveState<br/>MemoryManager"]
     RC --> RS["StatefulAgent.RestoreState<br/>+ ReplayEvents"]
     RA --> L
     STOP["Manager.Stop"] --> FS["final Snapshot save"]
     STOP --> CST["cancel + agent.Stop"]
-    CP["CheckpointPlugin"] --> CK["CheckpointStore.Save<br/>ExperienceCheckpoint"]
+    CK["fabric/task CheckpointEnvelope<br/>(C1.3 后继)"]
     PLG["RuntimePlugin / WorkflowHook"] --> BUS["EventBus"]
 ```
 
@@ -132,110 +141,6 @@ func (m *Manager) InjectLLMFailure(ctx context.Context, agentID string, errType 
 // Snapshot / restore helpers
 func RecoverSnapshotOrEvents(ctx context.Context, store base.SnapshotStore, agentID string, eventFn func() map[string]any) map[string]any
 
-// Checkpoints
-type CheckpointStore interface {
-    Save(ctx context.Context, key string, data []byte) error
-    Load(ctx context.Context, key string) ([]byte, error)
-}
-type ExperienceCheckpoint struct {
-    SchemaVersion    int
-    ExecutionID      string
-    WorkflowID       string
-    StateVersion     int64
-    Status           string
-    CurrentRound     int
-    StepStates       []StepStateSnapshot
-    Variables        map[string]interface{}
-    OutputStore      map[string]string
-    DAGNodes         []string
-    DAGEdges         []DAGEdge
-    RouteHistory     []RouteEntry
-    ToolHistory      []ToolEntry
-    MemoryHits       []MemoryEntry
-    InterruptHistory []InterruptEntry
-    LoopHistory      []LoopEntry
-    ErrorHistory     []ErrorEntry
-    ScoringSignals   []ScoringSignal
-    CreatedAt        time.Time
-}
-func CheckpointKey(executionID string) string
-func NewCheckpointPlugin(name string, store CheckpointStore) *CheckpointPlugin
-func (p *CheckpointPlugin) WithFlushInterval(n int) *CheckpointPlugin
-func (p *CheckpointPlugin) WithCollector(c *ExecutionCollector) *CheckpointPlugin
-func (p *CheckpointPlugin) BeforeStep(ctx context.Context, executionID string, step *Step) error
-func (p *CheckpointPlugin) AfterStep(ctx context.Context, executionID string, result *StepResult) error
-func (p *CheckpointPlugin) Snapshot(executionID string) *ExperienceCheckpoint
-func (p *CheckpointPlugin) Flush(ctx context.Context, executionID string) error
-func (p *CheckpointPlugin) Cleanup(executionID string)
-
-// Plugins
-type Capability string
-const (
-    CapObserver   Capability = "observer"
-    CapCheckpoint Capability = "checkpoint"
-    CapRouter     Capability = "router"
-    CapLoop       Capability = "loop"
-    CapMemory     Capability = "memory"
-    CapEvolution  Capability = "evolution"
-    CapTool       Capability = "tool"
-    CapRecovery   Capability = "recovery"
-)
-type RuntimePlugin interface {
-    Name() string
-    Capabilities() []Capability
-    Start(ctx context.Context, bus EventBus) error
-    Stop(ctx context.Context) error
-}
-type WorkflowHook interface {
-    BeforeStep(ctx context.Context, executionID string, step *Step) error
-    AfterStep(ctx context.Context, executionID string, result *StepResult) error
-}
-type MemoryPlugin interface {
-    RuntimePlugin
-    AdviseRoute(ctx context.Context, state RouteState) ([]RouteAdvice, error)
-}
-type EvolutionPlugin interface {
-    RuntimePlugin
-    Recommend(ctx context.Context, state ExecutionState) (*RuntimeRecommendation, error)
-    RecordOutcome(ctx context.Context, outcome ExecutionOutcome) error
-}
-type RecoveryPlugin interface {
-    RuntimePlugin
-    ShouldRecover(ctx context.Context, failure StepFailure, state ExecutionState) bool
-}
-type EventBus interface {
-    Emit(ctx context.Context, streamID string, eventType ares_events.EventType, moduleName string, payload map[string]any)
-    Subscribe(ctx context.Context, filter ares_events.EventFilter) (<-chan *ares_events.Event, error)
-}
-
-// Workflow step mirror types
-type StepStatus string
-const (
-    StepStatusPending   StepStatus = "pending"
-    StepStatusRunning   StepStatus = "running"
-    StepStatusCompleted StepStatus = "completed"
-    StepStatusFailed    StepStatus = "failed"
-    StepStatusSkipped   StepStatus = "skipped"
-)
-type Step struct {
-    ID        string
-    Name      string
-    AgentType string
-    Status    StepStatus
-    Output    string
-    Error     string
-    StartedAt time.Time
-}
-type StepResult struct {
-    StepID   string
-    Name     string
-    Status   StepStatus
-    Output   string
-    Error    string
-    Duration time.Duration
-    Metadata map[string]string
-}
-
 // Sentinel errors
 var (
     ErrAgentNotFound        // wraps apperrors.ErrNotFound
@@ -263,8 +168,7 @@ var (
 | `Manager.NotifyAgentDead` | 触发带退避的异步复活，遵循 `MaxRestartsPerAgent`。 |
 | `Manager.healthCheck` | 通过 `Heartbeater` 或 `Status()` 的周期性存活探测。 |
 | `Manager.WithSnapshotStore` | 接入 `SnapshotStore` 以支持快照优先恢复。 |
-| `RecoverSnapshotOrEvents` | 快照优先、事件兜底的状态恢复。 |
-| `CheckpointPlugin` | 在步骤边界持久化 `ExperienceCheckpoint` 以支持崩溃恢复。 |
+| `CheckpointPlugin` | **已删除（C1.3）** —— 改用 fabric/task `CheckpointEnvelope`。 |
 | `RuntimePlugin` / `WorkflowHook` | 插件总线的扩展契约。 |
 | `EventBus` | 暴露给插件的事件扇出系统。 |
 | `AgentInfo` / `ListAgents` | 面向 dashboard 的内省。 |
@@ -277,14 +181,14 @@ var (
   `Heartbeater`、`SnapshotStore`。
 - `ares_runtime` -> `internal/ares_events`：使用 `EventStore` 进行事件回放、
   完整性校验与生命周期事件发射。
-- `ares_runtime` -> `internal/ares_memory`：用于认知恢复
-  （`GetLatestSessionForLeader`、`GetMessages`）与 event store 接线。
-- `ares_runtime` -> `internal/ares_ctxutil`：用于 detached/带标签 context 与
-  后台任务统计。
+- `ares_runtime` -> `internal/runtime/memory`：用于认知恢复（`GetMessages`）
+  与 event store 接线（原 `internal/runtime/memory` 路径已并入此处）。
+- `ares_runtime` -> `internal/runtime` `ctxutil`：用于 detached/带标签
+  context 与后台任务统计（原 `internal/runtime/ctxutil.go`）。
 - `ares_runtime` -> `internal/core/models`：使用 `AgentStatus` 常量作为基于状态的
   健康检查兜底。
-- 插件（`MemoryPlugin`、`EvolutionPlugin`、`RecoveryPlugin`）消费工作流引擎产出的
-  执行状态与结果，并向 runtime 反馈路由与恢复决策。
+- 插件（`RecoveryPlugin`、`WorkflowHook`）消费执行状态并向 runtime 反馈恢复
+  决策；检查点与进化结果已迁至 fabric/task / `ares_evolution`（C1.3）。
 
 ## 扩展方式
 
@@ -292,11 +196,11 @@ var (
    `Manager.RegisterAgent(agent, factory)` 注册；工厂会在每次复活时被调用。
 2. 实现快照优先恢复：实现 `base.SnapshotStore` 并在 `Start` 前通过
    `Manager.WithSnapshotStore(store)` 接入。
-3. 新增工作流插件：实现 `RuntimePlugin`（可选 `WorkflowHook`、`MemoryPlugin`、
-   `EvolutionPlugin`、`RecoveryPlugin`），声明其 `Capability` 集合，并在 `Start`
-   期间注册到 `EventBus`。
-4. 持久化执行检查点：实现 `CheckpointStore`，用 `NewCheckpointPlugin(name, store)`
-   构建，通过 `WithFlushInterval` 调优批量写入，并在执行完成时调用 `Flush`。
+3. 新增工作流插件：实现 `RuntimePlugin`（可选 `WorkflowHook`、
+   `RecoveryPlugin`），声明其 `Capability` 集合，并在 `Start` 期间注册到
+   `EventBus`。
+4. 持久化执行检查点：经 fabric/task `CheckpointEnvelope`（runtime 的
+   `CheckpointPlugin` 路径随 C1.3 删除）。
 5. 在测试中通过混沌方法（`PauseAgent`、`SlowAgent`、`ToolTimeout`、
    `PartitionNetwork`、`CorruptMemory`、`DisconnectMCP`、`InjectLLMFailure`）
    注入故障，验证复活与兜底路径。
@@ -313,8 +217,17 @@ var (
 ## 成熟度
 
 Production。该包由 `runtime_test.go`、`runtime_core_test.go`、`recovery_test.go`、
-`arena_test.go`、`checkpoint_flush_test.go`、`router_test.go`、
-`outcome_recorder_test.go` 以及进化插件测试覆盖；实现 `Runtime` 监督接口，集成到
+`manager_chaos_test.go`、`resurrection_race_test.go` 及
+`internal/runtime/arena/` 下的 arena 测试覆盖；实现 `Runtime` 监督接口，集成到
 SDK 与 agents；不含任何实验性标记。
+
+
+## RegisterAgentDAG 注意事项（核实）
+
+`Manager.RegisterAgentDAG` 保存的是供 runtime 快照与进化补丁使用的 agent
+拓扑。serve 在 `AgentDAGLiveKey` 下注册 live `agents.peers` DAG，但**不**把它
+编译进 task fabric——agent 拓扑不是工作任务（见 `cmd/ares/serve_peer.go`）。
+只有 session/plan 图会被编译成可执行任务（经 `planprojection` /
+`Fabric.CompilePlan`）。
 
 {{< maturity "Production" >}}

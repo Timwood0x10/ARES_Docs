@@ -5,7 +5,7 @@ weight: 112
 maturity: "Production"
 ---
 
-The `internal/ares_archive` package (package `ares_archive`) implements
+The `internal/runtime/archive` package (package `archive`) implements
 **archive-style round summarization** for the closed-loop agent. Each
 conversation round is persisted as an independent `RoundRecord` under
 `.context/rounds/round_N.json`. Records are never merged (git-log-per-commit,
@@ -177,7 +177,7 @@ var (
 - `ares_archive` -> `internal/ares_events`: consumes `EventToolCallCompleted`, `EventLLMCall`, and `EventMessageAdded` payloads for extraction; provides the `ArchiveSink` bridge so `CompactableEventStore` flushes each round before compaction. `ArchiveSink` is defined in ares_events to avoid a cyclic import.
 - `ares_archive` -> `internal/ares_config`: `NewCompactableStoreWithArchive` reads `ArchiveConfig` (`enabled` / `dir` / `max_rounds`; defaults `.context/rounds`, 200, default-on).
 - `ares_archive` -> `cmd/ares`: `serve.go` builds the shared archive-enabled store via `NewCompactableStoreWithArchive`; `recall.go` exposes the `recall query <text>` / `recall round <N>` CLI over `ArchiveReader`.
-- `ares_archive` -> `internal/api_impl`: `NewEventStoreWithArchive` adapts the shared store into the api_impl `*EventStore` shape (`RawStore()` exposes the underlying `*MemoryEventStore`, e.g. for `dashboard.SetEventStore`).
+- `ares_archive` -> `internal/ares_events`: `NewEventStoreWithArchive` adapts the shared store into the event-store shape (`RawStore()` exposes the underlying store; `cmd/ares` and `internal/dashboard` were deleted — the panel is now `internal/introspect`).
 
 ## Extension points
 

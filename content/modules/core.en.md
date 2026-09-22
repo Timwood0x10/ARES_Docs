@@ -5,8 +5,15 @@ weight: 40
 maturity: "Production"
 ---
 
+> **Status (verified against the source tree 2026-09):** There is no `api/core`
+> package — `api/` is a flat package and core DTOs are exposed via
+> `internal/llmcore` + `sdk` aliases. There is no `internal/core/errors`
+> package (only `internal/core/models`); `AppError`, `ErrorCode`,
+> `WorkflowRequest` and related workflow/error types do not exist in the
+> source tree. The page documents the conceptual DTO layer.
+
 The `core` module is the shared contract layer of ARES. It is split across two
-locations: `api/core` (package `core`) holds the public data-transfer objects
+locations: `internal/llmcore` (re-exported via `sdk`/`api` as `core`) holds the public data-transfer objects
 and service interfaces for LLM, agent, and workflow operations; `internal/core`
 holds the internal domain models (`internal/core/models`, package `models`) and
 the structured error types plus re-exported sentinel errors
@@ -52,7 +59,7 @@ flowchart TD
     SDK --> AGT
     AGENTS["internal/agents"] --> MDL
     AGENTS --> ERR
-    RT["internal/ares_runtime"] --> AGT
+    RT["internal/runtime"] --> AGT
     RT --> ERR
     LLM --->|"used by"| AGENTS
     WF --->|"used by"| RT
@@ -455,6 +462,8 @@ const (
     DefaultTaskTTL    = 1 * time.Hour
 )
 
+
+<!-- Note: internal/core/errors does not exist in source (only internal/core/models). Below is historical reference. -->
 // ---- internal/core/errors (package errors) ----
 type ErrorCode struct {
     Code       string
@@ -508,9 +517,9 @@ func New(code *ErrorCode) *AppError
 | Type / Method | Purpose |
 | --- | --- |
 | `core.LLMConfig` | Provider, model, sampling, and prompt-length knobs for LLM calls. |
-| `core.LLMMessage` / `ToolCall` / `FunctionCall` | Conversation message and tool-call representation. |
+| `llmcore.LLMMessage` / `ToolCall` / `FunctionCall` | Conversation message and tool-call representation. |
 | `core.Tool` / `FunctionDefinition` | Function-calling schema passed to the LLM. |
-| `core.GenerateRequest` / `GenerateResponse` | LLM generation request/response (streaming, tools, overrides). |
+| `llmcore.GenerateRequest` / `GenerateResponse` | LLM generation request/response (streaming, tools, overrides). |
 | `core.TokenUsage` | Prompt/completion/total token accounting. |
 | `core.LLMService` | Interface for generation, embedding, and config introspection. |
 | `core.Agent` / `AgentConfig` / `AgentStatus` | Agent entity and lifecycle status enum. |
@@ -531,7 +540,7 @@ func New(code *ErrorCode) *AppError
 ## Module collaboration
 
 - `api/core` is imported by `sdk`, `api/service/llm`, `internal/agents`
-  (`agents.Service`, `sub.ChatClient`/executor), `internal/ares_runtime`,
+  (`agents.Service`, `sub.ChatClient`/executor), `internal/runtime`,
   and the workflow engine for the DTOs and service interfaces.
 - `internal/core/models` is imported by `internal/agents/base`, `leader`,
   `sub`, `ares_runtime` (status fallback), and the recommendation/aggregation

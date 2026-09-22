@@ -7,7 +7,7 @@ maturity: "Production"
 
 `llm` 模块分布在三处：`internal/llmservice`（决定走普通生成还是 Chat API
 的路由服务）、`internal/llm`（多供应商 HTTP 客户端与故障转移层），以及
-`api/service/llm`（对嵌入者隐藏 internal 类型的薄封装）。
+`internal/llmservice`（对嵌入者隐藏 internal 类型的薄封装）。
 
 ## 职责
 
@@ -20,7 +20,7 @@ maturity: "Production"
   支持流式、tracing、callbacks、限流与提示清洗。
 - 提供 `FailoverClient` 实现多供应商容错：按供应商冷却、对限流
   （HTTP 429）与瞬时错误自动重试，并由 scorer 选择最健康的客户端。
-- 一切都通过 `api/service/llm.Service` 暴露，外部代码无需导入
+- 一切都通过 `internal/llmservice.Service` 暴露，外部代码无需导入
   `internal/llm` 或 `internal/llmservice`。
 
 ## 架构图
@@ -52,7 +52,7 @@ flowchart TD
 type LLMClient interface {
     Generate(ctx context.Context, prompt string) (string, error)
     GenerateStream(ctx context.Context, prompt string) (<-chan llm.StreamChunk, error)
-    Chat(ctx context.Context, messages []*core.LLMMessage, tools []core.Tool, params map[string]any) (*core.GenerateResponse, error)
+    Chat(ctx context.Context, messages []*llmcore.LLMMessage, tools []llmcore.Tool, params map[string]any) (*llmcore.GenerateResponse, error)
     IsEnabled() bool
     GetProvider() string
     GetModel() string
@@ -61,12 +61,12 @@ type LLMClient interface {
 
 type Service struct { /* unexported */ }
 func NewService(config *Config) (*Service, error)
-func (s *Service) Generate(ctx context.Context, request *core.GenerateRequest) (*core.GenerateResponse, error)
+func (s *Service) Generate(ctx context.Context, request *llmcore.GenerateRequest) (*llmcore.GenerateResponse, error)
 func (s *Service) GenerateSimple(ctx context.Context, prompt string) (string, error)
 func (s *Service) GenerateEmbedding(ctx context.Context, request *core.EmbeddingRequest) (*core.EmbeddingResponse, error)
 func (s *Service) GetConfig() *core.LLMConfig
 func (s *Service) IsEnabled() bool
-func (s *Service) GetProvider() core.LLMProvider
+func (s *Service) GetProvider() llmcore.LLMProvider
 func (s *Service) GetModel() string
 func (s *Service) Close()
 
@@ -102,7 +102,7 @@ func NewClientFromEnv() (*Client, error)
 func (c *Client) Generate(ctx context.Context, prompt string) (string, error)
 func (c *Client) GenerateWithParams(ctx context.Context, prompt string, params map[string]any) (string, error)
 func (c *Client) GenerateStream(ctx context.Context, prompt string) (<-chan StreamChunk, error)
-func (c *Client) Chat(ctx context.Context, messages []*core.LLMMessage, tools []core.Tool, params map[string]any) (*core.GenerateResponse, error)
+func (c *Client) Chat(ctx context.Context, messages []*llmcore.LLMMessage, tools []llmcore.Tool, params map[string]any) (*llmcore.GenerateResponse, error)
 func (c *Client) IsEnabled() bool
 func (c *Client) GetProvider() string
 func (c *Client) GetModel() string
@@ -121,7 +121,7 @@ func NewFailoverClient(configs []*Config, timeout time.Duration, rate float64, b
 func NewFailoverScorer(configs []*Config, timeout time.Duration, rate float64, burst int) (*FailoverClient, error)
 func (fc *FailoverClient) Generate(ctx context.Context, prompt string) (string, error)
 func (fc *FailoverClient) GenerateStream(ctx context.Context, prompt string) (<-chan StreamChunk, error)
-func (fc *FailoverClient) Chat(ctx context.Context, messages []*core.LLMMessage, tools []core.Tool, params map[string]any) (*core.GenerateResponse, error)
+func (fc *FailoverClient) Chat(ctx context.Context, messages []*llmcore.LLMMessage, tools []llmcore.Tool, params map[string]any) (*llmcore.GenerateResponse, error)
 func (fc *FailoverClient) IsEnabled() bool
 func (fc *FailoverClient) GetProvider() string
 func (fc *FailoverClient) GetModel() string
@@ -133,12 +133,12 @@ func (fc *FailoverClient) Close()
 // api/service/llm (public wrapper, no internal/ imports in its API)
 type Service struct { /* unexported */ }
 func NewService(cfg *Config) (*Service, error)
-func (s *Service) Generate(ctx context.Context, request *core.GenerateRequest) (*core.GenerateResponse, error)
+func (s *Service) Generate(ctx context.Context, request *llmcore.GenerateRequest) (*llmcore.GenerateResponse, error)
 func (s *Service) GenerateSimple(ctx context.Context, prompt string) (string, error)
 func (s *Service) GenerateEmbedding(ctx context.Context, request *core.EmbeddingRequest) (*core.EmbeddingResponse, error)
 func (s *Service) GetConfig() *core.LLMConfig
 func (s *Service) IsEnabled() bool
-func (s *Service) GetProvider() core.LLMProvider
+func (s *Service) GetProvider() llmcore.LLMProvider
 func (s *Service) GetModel() string
 func (s *Service) Close()
 ```
@@ -160,19 +160,19 @@ func (s *Service) Close()
 | `llm.FailoverClient` | `NewFailoverClient(configs, timeout, rate, burst, opts...)` | 带冷却与 scorer 的多供应商客户端。 |
 | `llm.FailoverClient` | `Clients()` / `ActiveProviders()` | 内省已注册与当前可用供应商。 |
 | `llm.StreamChunk` | 字段 `Content`、`Err` | 单个流式 token 或终止错误。 |
-| `api/service/llm.Service` | `NewService(*Config)` | 公开封装；将 `core.LLMConfig` fallback 转为 `llm.Config` 后委托。 |
-| `core.LLMProvider` | 常量 `LLMProviderOpenAI`、`LLMProviderOpenRouter`、`LLMProviderOllama`、`LLMProviderAnthropic` | 供应商枚举。 |
+| `internal/llmservice.Service` | `NewService(*Config)` | 公开封装；将 `core.LLMConfig` fallback 转为 `llm.Config` 后委托。 |
+| `llmcore.LLMProvider` | 常量 `LLMProviderOpenAI`、`LLMProviderOpenRouter`、`LLMProviderOllama`、`LLMProviderAnthropic` | 供应商枚举。 |
 
 ## 模块协作
 
-- `api/service/llm.Service` 是唯一的公开入口。其 `Config.toInternal` 将
+- `internal/llmservice.Service` 是唯一的公开入口。其 `Config.toInternal` 将
   `core.LLMConfig` fallback 转换为 `llm.Config`，再转发给
   `llmservice.NewService`。
 - `llmservice.NewService` 决定装配方式：当 `Config.Fallbacks` 非空时构建
   `FailoverClient`（主 + 备），否则构建单一 `llm.Client`。Tracer 与
   `ares_callbacks.Registry` 会被附加到每个底层客户端。
 - `llmservice.Service.Generate` 是路由接缝。`hasToolMessages` 检查每条
-  `*core.LLMMessage` 的 `ToolCalls`/`ToolCallID`；若任一存在，或
+  `*llmcore.LLMMessage` 的 `ToolCalls`/`ToolCallID`；若任一存在，或
   `request.Tools` 非空，调用走 `generateWithChat` 让模型发出 tool call；
   否则将消息拼接成 `[role]: content` 提示做普通生成。
 - `llm.Client` 执行实际 HTTP 调用：Chat 走 `chatOpenAI`/`chatAnthropic`/
@@ -191,7 +191,7 @@ func (s *Service) Close()
 
 1. **新增 LLM 供应商。** 在 `*llm.Client` 上实现供应商专属的 `generate*`
    与 `chat*` 辅助函数（参考 `chatOpenAI`），在 `Chat`/`Generate` 中按
-   新的 `ProviderType` 常量分派，并在 `core.LLMProvider` 加入供应商名。
+   新的 `ProviderType` 常量分派，并在 `llmcore.LLMProvider` 加入供应商名。
 2. **跨供应商故障转移。** 在 `Config.Fallbacks` 中填入额外的
    `*core.LLMConfig`。`llmservice.NewService` 会构建 `FailoverClient`；
    通过底层客户端选项传入 `llm.WithCooldownDuration` 调节冷却。
@@ -204,7 +204,7 @@ func (s *Service) Close()
    类型断言并把 `float64` 转为 `float32`。
 5. **从公开 API 使用。** 通过
    `llm.NewService(&llm.Config{LLMConfig: ..., Fallbacks: ...})` 构建
-   `api/service/llm.Service`，再调用 `Generate`/`GenerateSimple`/
+   `internal/llmservice.Service`，再调用 `Generate`/`GenerateSimple`/
    `GenerateEmbedding`。封装层屏蔽了所有 `internal/llm` 类型。
 
 ## 双语状态
@@ -218,5 +218,15 @@ Production。本模块由 `llmservice_test.go`、`client_test.go`、
 `chat_test.go`、`failover_test.go`、`client_stream_test.go`、
 `client_callback_test.go` 覆盖，已通过 `sdk.WithLLMConfig`/
 `sdk.WithFallbackLLM` 接入 SDK，无任何实验性标记。
+
+
+## 包边界说明（0.4）
+
+`internal/llm`（per-provider adapter 与响应解析）自 0.3.1 起生产零调用，
+已整包删除——ReAct 时代的 adapter 表面不复存在。运行期 provider 降级只有一条
+链：`internal/llm.FailoverClient`。工具调用消息/响应类型在 `internal/llmcore`
+（`LLMMessage`、`Tool`、`ToolCall`、`GenerateResponse`）；
+`internal/llm/chat.go` 把各 provider 的线上格式归一到这些类型（`Chat` 签名使用
+`llmcore.*`，不存在 `core.*` 包别名）。
 
 {{< maturity "Production" >}}

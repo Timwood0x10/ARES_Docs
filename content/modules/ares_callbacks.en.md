@@ -153,13 +153,13 @@ func (r *Registry) Count(event Event) int
 - `internal/llm` injects an `Emitter` through `llm.WithCallbacks` and emits
   `EventLLMStart` / `EventLLMEnd` / `EventLLMError` from `Generate`,
   `GenerateStream`, and `Chat`.
-- `internal/agents/leader` and `internal/agents/sub` accept an `Emitter` via
+- `internal/agents` and `internal/agents/sub` accept an `Emitter` via
   `WithCallbacks` / `SetCallbacks` and emit agent and tool lifecycle events.
 - `internal/ares_bootstrap` wires one shared `Registry` into the LLM client,
   task executor, and leader agent through `NewCallbackRegistry`,
   `NewLLMClientWithCallbacks`, `WireTaskExecutorCallbacks`, and
   `WireLeaderAgentCallbacks`.
-- `internal/ares_evolution` registers an `EventAgentEnd` handler on the shared
+- `internal/runtime/ares_evolution` registers an `EventAgentEnd` handler on the shared
   registry to trigger evolution cycles after an agent stops.
 - `api/service/callbacks` re-exports the registry as a thin wrapper for public
   consumers, aliasing `Event`, `Context`, and `Handler` to the internal types.

@@ -9,7 +9,7 @@ maturity: "Production"
 
 ## Responsibility
 
-The `ares_memory` package (Go import path `internal/ares_memory`, package name
+The `ares_memory` package (Go import path `internal/runtime/memory`, package name
 `memory`) provides unified memory management for the ARES agent framework. It
 coordinates four concerns through a single `MemoryManager` interface:
 
@@ -96,7 +96,7 @@ func NewMemoryManagerWithDistiller(config *MemoryConfig, embedder apiembed.Embed
 func NewProductionMemoryManager(dbPool *postgres.Pool, embeddingClient *embedding.EmbeddingClient, config *MemoryConfig) (*ProductionMemoryManager, error)
 func DefaultMemoryConfig() *MemoryConfig
 
-// ContextRetriever (defined in internal/ares_memory/context) is the RAG contract.
+// ContextRetriever (defined in internal/runtime/memory/context) is the RAG contract.
 type ContextRetriever interface {
     Retrieve(ctx context.Context, input string, topK int) ([]ContextSnippet, error)
 }
@@ -111,7 +111,7 @@ via `EnableRAG`, default false).
 
 | Type / Method | Kind | Purpose |
 | --- | --- | --- |
-| `MemoryManager` | interface | 16-method contract for all memory operations. |
+| `MemoryManager` | interface | 17-method contract for all memory operations. |
 | `memoryManager` | struct | In-memory implementation; coordinates `SessionMemory`, `TaskMemory`, optional distiller, and RAG retrievers. |
 | `ProductionMemoryManager` | struct | PostgreSQL + pgvector implementation with `TenantGuard`, `WriteBuffer`, and repository-backed storage. |
 | `MemoryConfig` | struct | Configuration: limits, TTLs, vector dim, RAG knobs, structured-cleaning toggle. |

@@ -5,7 +5,7 @@ weight: 130
 maturity: "Production"
 ---
 
-`internal/ares_protocol/ahp` 包（包名 `ahp`）实现了用于智能体间通信的 AHP 消息协议。
+`internal/runtime/protocol/ahp` 包（包名 `ahp`）实现了用于智能体间通信的 AHP 消息协议。
 它提供类型化消息（`TASK`、`RESULT`、`PROGRESS`、`ACK`、`HEARTBEAT`）、按智能体的
 内存 `MessageQueue` 与 `QueueRegistry`、将队列与心跳监控整合在一起的 `Protocol`
 管理器、可插拔的 `Codec`（默认 JSON）以及用于暂存入队失败消息的 `DLQ` 死信队列。

@@ -1,11 +1,16 @@
----
+
 title: "dashboard"
 description: "ARES 运行时的 Web 仪表盘服务、Agent 拓扑 DAG、监控 UI 端点及智能引擎。"
 weight: 240
 maturity: "Production"
 ---
+> **状态（2026-09 对照源码树核实）：** 不存在 `internal/dashboard` 包。
+> 面板 HTTP 面位于 `cmd/ares`（`agent_routes_*.go`、`dashboard.go`）与
+> `internal/introspect`（`Handler`、`ControlServer`、`CollabReporter`、`FlightProvider`）。
+> 以源码为准。
 
-`dashboard` 包（`internal/dashboard`）是 ARES 运行时用于观察与操作的统一 Web
+
+`dashboard` 包（`internal/introspect`）是 ARES 运行时用于观察与操作的统一 Web
 层。它通过 HTTP 与 WebSocket 暴露 v2 API，在后台运行用于打分 Agent 健康度并检测
 异常的智能引擎，并将混沌竞技场与飞行记录器接入同一界面。
 
@@ -118,7 +123,7 @@ type AgentLister interface {
 
 | 类型 | 用途 | 关键方法 |
 |------|------|----------|
-| `APIv2` | 统一仪表盘 API 路由器 | `NewAPIv2`, `Handler`, `MountGinRoutes`, `SetArena`, `SetSurvival`, `SetIntelligence`, `SetEvalMux`, `SetMemoryMux`, `SetRetrievalMux`, `SetAPIKey` |
+| `APIv2` | 统一仪表盘 API 路由器 | `NewAPIv2`, `Handler`, ServeHTTP, `SetArena`, `SetSurvival`, `SetIntelligence`, `SetEvalMux`, `SetMemoryMux`, `SetRetrievalMux`, `SetAPIKey` |
 | `Orchestrator` | 管理 Agent 创建、执行与复活 | `NewOrchestrator`, `CreateAgent`, `GetAgent`, `CancelAgent`, `ListAgents`, `SetHub`, `SetEventStore`, `SetFlightRecorder`, `SetTemplates`, `SetToolAliases`, `Stop` |
 | `WSHub` | 基于 channel 的 WebSocket pub/sub hub | `NewWSHub`, `Run`, `Stop`, `BroadcastToChannel`, `BroadcastAll`, `Register`, `Unregister`, `ClientCount`, `ChannelCount` |
 | `WSClient` | 单个 WebSocket 连接 | `NewWSClient`, `Subscribe`, `Unsubscribe`, `Start`, `Wait`, `ReadPump`, `WritePump` |
@@ -174,8 +179,8 @@ type AgentLister interface {
 
 ## 成熟度
 
-Production。该包拥有完整的测试（`api_test.go`、`orchestrator_test.go`、
-`event_bridge_test.go`、`ws_hub_test.go`、`service_test.go`），通过
-`MountGinRoutes` 与内嵌静态控制台接入 SDK 入口，且不含实验性标记。
+Production。该包拥有完整的测试（、、
+、、），通过
+ServeHTTP 与内嵌静态控制台接入 SDK 入口，且不含实验性标记。
 
 {{< maturity "Production" >}}

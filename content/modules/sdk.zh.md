@@ -208,7 +208,7 @@ type MCPConn struct {
 | `New(opts ...Option) (*Runtime, error)` | 返回 error 的构造函数，供生产代码使用。 |
 | `Runtime.Close()` | 取消后台 goroutine，关闭 LLM、内存与 MCP 客户端。 |
 | `Runtime.NewAgent` | 基于 `AgentOption` 构建绑定到该 Runtime 的 `Agent`。 |
-| `Runtime.NewTeam` | 构建 `Team`（leader + 成员）用于多智能体编排。 |
+| `Runtime.NewTeam`（**已移除**：源码中无 `NewTeam`/`Team` 符号——见下方说明） | 构建 `Team`（leader + 成员）用于多智能体编排。 |
 | `Runtime.Evolve` | 运行 3 代 GA 周期，以真实执行结果为策略打分。 |
 | `Runtime.KnowledgeStore` | 当知识功能启用时返回 AKF 存储（内存、SQLite 或 Postgres）。 |
 | `Agent.Run` | ReAct 循环：构造消息、生成、执行工具、发射事件并返回 `Result`。 |
@@ -221,19 +221,19 @@ type MCPConn struct {
 
 ## 模块协作
 
-- `sdk` -> `api/core`：使用 `LLMConfig`、`BaseConfig`、`LLMMessage`、`Tool`、
+- `sdk` -> `internal/llmcore`：使用 `LLMConfig`、`BaseConfig`、`LLMMessage`、`Tool`、
   `GenerateRequest`、`LLMProvider` 常量。
-- `sdk` -> `api/service/llm`：使用带 fallback 链的 `llm.Service` 执行生成。
-- `sdk` -> `api/tools`：使用 `tools.Registry` 与 `tools.Tool` 接口。
-- `sdk` -> `api/mcp`：使用 stdio MCP 客户端，工具经内部 `mcpToolAdapter` 适配。
-- `sdk` -> `internal/ares_memory`：使用 `MemoryManager`（会话、RAG、蒸馏），
+- `sdk` -> `internal/llmservice`：使用带 fallback 链的 `llm.Service` 执行生成。
+- `sdk` -> `internal/apitools`：使用 `tools.Registry` 与 `tools.Tool` 接口。
+- `sdk` -> `internal/mcpclient`：使用 stdio MCP 客户端，工具经内部 `mcpToolAdapter` 适配。
+- `sdk` -> `internal/runtime/memory`：使用 `MemoryManager`（会话、RAG、蒸馏），
   由 `wireMemory` 装配。
 - `sdk` -> `internal/knowledge` 与 `internal/knowledge/runtime`：使用 AKF 知识织物
   runtime、provider、linker、reducer 与各类存储。
-- `sdk` -> `internal/ares_evolution`（genome、mutation）与
+- `sdk` -> `internal/runtime/ares_evolution`（genome、mutation）与
   `internal/ares_bootstrap`：用于策略进化与热更新装配。
 - `sdk` -> `internal/ares_events`：使用事件存储与 `TaskCompleted` 发射，供蒸馏订阅者消费。
-- `sdk` -> `internal/ares_experience`：使用 `DistillationService` 与 AKG
+- `sdk` -> `internal/runtime/memory/experience`：使用 `DistillationService` 与 AKG
   `DistillBridge`，将对话蒸馏为知识对象。
 
 ## 扩展方式
@@ -263,5 +263,15 @@ type MCPConn struct {
 Production。`sdk` 包是 runtime 的官方入口，由 `sdk_test.go`、`config_test.go`
 以及内存、进化、蒸馏、AKF 装配相关的 `_test.go` 文件覆盖，不含任何实验性标记，
 并通过 `New` / `NewRuntime` 集成所有内部子系统。
+
+
+## ConfigFile 说明（核实）
+
+- `ConfigFile.Tasks.WaitTimeout` 对应 ares.yaml 的 `tasks.wait_timeout`；
+  `ares run` 用它作为 agent.Run 的 ctx 超时（硬顶 300s，未设置默认 120s）。
+  校验拒绝不可解析/非正值。
+- `ConfigFile.Memory.Session.MaxHistory` 对应 `memory.session.max_history`
+  （session 存储窗口；与读侧 `memory.max_history` 是不同语义）。
+- `ares run` 不接受任何配置 flag——仅 `-c`（配置路径）。配置只经 ares.yaml。
 
 {{< maturity "Production" >}}

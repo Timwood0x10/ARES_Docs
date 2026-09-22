@@ -5,13 +5,22 @@ weight: 120
 maturity: "Production"
 ---
 
-The `internal/ares_runtime` package (package `ares_runtime`) is the process-level
+> **Status (verified 2026-09 against the source tree):** there is no
+> `internal/ares_runtime` package. The Agent lifecycle manager lives in
+> **`internal/runtime`** (package `runtime`, formerly `ares_runtime`).
+> `CheckpointPlugin` / `MemoryPlugin` / `EvolutionPlugin` and the
+> `CapCheckpoint` / `CapMemory` / `CapEvolution` capabilities were deleted
+> (C1.3); `RecoverSnapshotOrEvents` was removed. Successors: fabric/task
+> `CheckpointEnvelope`, retriever_wiring, direct `ares_evolution`
+> consumption. Source is authoritative.
+
+The `internal/runtime` package (package `runtime`) is the process-level
 supervisor for agents. Agents are treated as disposable executors; the runtime
 owns their birth, death, and resurrection. The `Manager` implements the
 `Runtime` interface and runs each agent in a managed goroutine with panic
 recovery, periodic health checks, and exponential-backoff resurrection driven
-by an `AgentFactory`. It also exposes a plugin bus, checkpoint store, and a
-chaos-engineering arena.
+by an `AgentFactory`. It also exposes a plugin bus and a chaos-engineering
+arena.
 
 ## Responsibility
 
@@ -26,11 +35,12 @@ chaos-engineering arena.
   state, then relaunch; exponential backoff (1s to 30s, 5 attempts) and a
   per-agent restart cap govern the retries.
 - Snapshot and restore stateful agents (`base.StatefulAgent`) through a
-  `SnapshotStore`, capturing final snapshots on shutdown.
-- Persist execution checkpoints (`ExperienceCheckpoint`) via `CheckpointPlugin`
-  for crash recovery of workflows.
-- Provide a plugin contract (`RuntimePlugin`, `WorkflowHook`, `MemoryPlugin`,
-  `EvolutionPlugin`, `RecoveryPlugin`) and an `EventBus` for extension.
+  `SnapshotStore`, capturing final snapshots on shutdown. Recovery inlines
+  snapshot-first then event replay (`RecoverSnapshotOrEvents` was removed).
+- Persist execution checkpoints via fabric/task `CheckpointEnvelope` (the
+  runtime `CheckpointPlugin` was deleted with C1.3).
+- Provide a plugin contract (`RuntimePlugin`, `WorkflowHook`,
+  `RecoveryPlugin`) and an `EventBus` for extension.
 - Expose chaos-engineering fault injection (`PauseAgent`, `SlowAgent`,
   `ToolTimeout`, `PartitionNetwork`, etc.) for the arena.
 
@@ -49,13 +59,13 @@ flowchart TD
     SR --> RA["RestoreAgent"]
     RA --> RC["recoverAgentState"]
     RC --> RPL["replayEvents<br/>EventStore.Read"]
-    RC --> SNAP["RecoverSnapshotOrEvents<br/>SnapshotStore"]
+    RC --> SNAP["snapshot first (inline)<br/>then events"]
     RC --> COG["buildCognitiveState<br/>MemoryManager"]
     RC --> RS["StatefulAgent.RestoreState<br/>+ ReplayEvents"]
     RA --> L
     STOP["Manager.Stop"] --> FS["final Snapshot save"]
     STOP --> CST["cancel + agent.Stop"]
-    CP["CheckpointPlugin"] --> CK["CheckpointStore.Save<br/>ExperienceCheckpoint"]
+    CK["fabric/task CheckpointEnvelope<br/>(C1.3 successor)"]
     PLG["RuntimePlugin / WorkflowHook"] --> BUS["EventBus"]
 ```
 
@@ -136,110 +146,6 @@ func (m *Manager) InjectLLMFailure(ctx context.Context, agentID string, errType 
 // Snapshot / restore helpers
 func RecoverSnapshotOrEvents(ctx context.Context, store base.SnapshotStore, agentID string, eventFn func() map[string]any) map[string]any
 
-// Checkpoints
-type CheckpointStore interface {
-    Save(ctx context.Context, key string, data []byte) error
-    Load(ctx context.Context, key string) ([]byte, error)
-}
-type ExperienceCheckpoint struct {
-    SchemaVersion    int
-    ExecutionID      string
-    WorkflowID       string
-    StateVersion     int64
-    Status           string
-    CurrentRound     int
-    StepStates       []StepStateSnapshot
-    Variables        map[string]interface{}
-    OutputStore      map[string]string
-    DAGNodes         []string
-    DAGEdges         []DAGEdge
-    RouteHistory     []RouteEntry
-    ToolHistory      []ToolEntry
-    MemoryHits       []MemoryEntry
-    InterruptHistory []InterruptEntry
-    LoopHistory      []LoopEntry
-    ErrorHistory     []ErrorEntry
-    ScoringSignals   []ScoringSignal
-    CreatedAt        time.Time
-}
-func CheckpointKey(executionID string) string
-func NewCheckpointPlugin(name string, store CheckpointStore) *CheckpointPlugin
-func (p *CheckpointPlugin) WithFlushInterval(n int) *CheckpointPlugin
-func (p *CheckpointPlugin) WithCollector(c *ExecutionCollector) *CheckpointPlugin
-func (p *CheckpointPlugin) BeforeStep(ctx context.Context, executionID string, step *Step) error
-func (p *CheckpointPlugin) AfterStep(ctx context.Context, executionID string, result *StepResult) error
-func (p *CheckpointPlugin) Snapshot(executionID string) *ExperienceCheckpoint
-func (p *CheckpointPlugin) Flush(ctx context.Context, executionID string) error
-func (p *CheckpointPlugin) Cleanup(executionID string)
-
-// Plugins
-type Capability string
-const (
-    CapObserver   Capability = "observer"
-    CapCheckpoint Capability = "checkpoint"
-    CapRouter     Capability = "router"
-    CapLoop       Capability = "loop"
-    CapMemory     Capability = "memory"
-    CapEvolution  Capability = "evolution"
-    CapTool       Capability = "tool"
-    CapRecovery   Capability = "recovery"
-)
-type RuntimePlugin interface {
-    Name() string
-    Capabilities() []Capability
-    Start(ctx context.Context, bus EventBus) error
-    Stop(ctx context.Context) error
-}
-type WorkflowHook interface {
-    BeforeStep(ctx context.Context, executionID string, step *Step) error
-    AfterStep(ctx context.Context, executionID string, result *StepResult) error
-}
-type MemoryPlugin interface {
-    RuntimePlugin
-    AdviseRoute(ctx context.Context, state RouteState) ([]RouteAdvice, error)
-}
-type EvolutionPlugin interface {
-    RuntimePlugin
-    Recommend(ctx context.Context, state ExecutionState) (*RuntimeRecommendation, error)
-    RecordOutcome(ctx context.Context, outcome ExecutionOutcome) error
-}
-type RecoveryPlugin interface {
-    RuntimePlugin
-    ShouldRecover(ctx context.Context, failure StepFailure, state ExecutionState) bool
-}
-type EventBus interface {
-    Emit(ctx context.Context, streamID string, eventType ares_events.EventType, moduleName string, payload map[string]any)
-    Subscribe(ctx context.Context, filter ares_events.EventFilter) (<-chan *ares_events.Event, error)
-}
-
-// Workflow step mirror types
-type StepStatus string
-const (
-    StepStatusPending   StepStatus = "pending"
-    StepStatusRunning   StepStatus = "running"
-    StepStatusCompleted StepStatus = "completed"
-    StepStatusFailed    StepStatus = "failed"
-    StepStatusSkipped   StepStatus = "skipped"
-)
-type Step struct {
-    ID        string
-    Name      string
-    AgentType string
-    Status    StepStatus
-    Output    string
-    Error     string
-    StartedAt time.Time
-}
-type StepResult struct {
-    StepID   string
-    Name     string
-    Status   StepStatus
-    Output   string
-    Error    string
-    Duration time.Duration
-    Metadata map[string]string
-}
-
 // Sentinel errors
 var (
     ErrAgentNotFound        // wraps apperrors.ErrNotFound
@@ -267,8 +173,7 @@ var (
 | `Manager.NotifyAgentDead` | Triggers async resurrection with backoff, honouring `MaxRestartsPerAgent`. |
 | `Manager.healthCheck` | Periodic liveness probe via `Heartbeater` or `Status()`. |
 | `Manager.WithSnapshotStore` | Wires a `SnapshotStore` for snapshot-first recovery. |
-| `RecoverSnapshotOrEvents` | Snapshot-first fallback to event-derived state. |
-| `CheckpointPlugin` | Persists `ExperienceCheckpoint` at step boundaries for crash recovery. |
+| `CheckpointPlugin` | **Removed (C1.3)** — use fabric/task `CheckpointEnvelope`. |
 | `RuntimePlugin` / `WorkflowHook` | Extension contracts for the plugin bus. |
 | `EventBus` | Fan-out event system exposed to plugins. |
 | `AgentInfo` / `ListAgents` | Introspection for dashboards. |
@@ -281,15 +186,16 @@ var (
   `Heartbeater`, `SnapshotStore`.
 - `ares_runtime` -> `internal/ares_events` for the `EventStore` used in event
   replay, integrity verification, and lifecycle event emission.
-- `ares_runtime` -> `internal/ares_memory` for cognitive recovery
-  (`GetLatestSessionForLeader`, `GetMessages`) and event-store wiring.
-- `ares_runtime` -> `internal/ares_ctxutil` for detached/labelled contexts and
-  background-task stats.
+- `ares_runtime` -> `internal/runtime/memory` for cognitive recovery
+  (`GetMessages`) and event-store wiring (the former `internal/runtime/memory`
+  path consolidated here).
+- `ares_runtime` -> `internal/runtime` `ctxutil` for detached/labelled
+  contexts and background-task stats (former `internal/runtime/ctxutil.go`).
 - `ares_runtime` -> `internal/core/models` for `AgentStatus` constants used by
   the status-based health check fallback.
-- Plugins (`MemoryPlugin`, `EvolutionPlugin`, `RecoveryPlugin`) consume
-  execution state and outcomes produced by the workflow engine and feed routing
-  and recovery decisions back into the runtime.
+- Plugins (`RecoveryPlugin`, `WorkflowHook`) consume execution state and feed
+  recovery decisions back into the runtime; checkpointing and evolution
+  outcomes moved to fabric/task / `ares_evolution` (C1.3).
 
 ## Extension points
 
@@ -299,12 +205,10 @@ var (
 2. Enable snapshot-first recovery by implementing `base.SnapshotStore` and
    wiring it via `Manager.WithSnapshotStore(store)` before `Start`.
 3. Add a workflow plugin by implementing `RuntimePlugin` (optionally
-   `WorkflowHook`, `MemoryPlugin`, `EvolutionPlugin`, or `RecoveryPlugin`),
-   declaring its `Capability` set, and registering it on the `EventBus` during
-   `Start`.
-4. Persist execution checkpoints by implementing `CheckpointStore`, building a
-   `NewCheckpointPlugin(name, store)`, tuning batch writes with
-   `WithFlushInterval`, and calling `Flush` on execution completion.
+   `WorkflowHook` or `RecoveryPlugin`), declaring its `Capability` set, and
+   registering it on the `EventBus` during `Start`.
+4. Persist execution checkpoints via fabric/task `CheckpointEnvelope` (the
+   runtime `CheckpointPlugin` path was removed with C1.3).
 5. Inject faults in tests via the chaos methods (`PauseAgent`, `SlowAgent`,
    `ToolTimeout`, `PartitionNetwork`, `CorruptMemory`, `DisconnectMCP`,
    `InjectLLMFailure`) to exercise resurrection and fallback paths.
@@ -324,9 +228,19 @@ only the prose differs.
 ## Maturity
 
 Production. The package is covered by `runtime_test.go`, `runtime_core_test.go`,
-`recovery_test.go`, `arena_test.go`, `checkpoint_flush_test.go`,
-`router_test.go`, `outcome_recorder_test.go`, and the evolution plugin tests.
-It implements the `Runtime` supervisor interface, integrates with the SDK and
-agents, and exposes no experimental markers.
+`recovery_test.go`, `manager_chaos_test.go`, `resurrection_race_test.go`,
+and arena tests under `internal/runtime/arena/`. It implements the `Runtime`
+supervisor interface, integrates with the SDK and agents, and exposes no
+experimental markers.
+
+
+## RegisterAgentDAG caveat (verified)
+
+`Manager.RegisterAgentDAG` stores agent topology for the runtime snapshot and
+evolution patches. Serve registers the live `agents.peers` DAG under
+`AgentDAGLiveKey` but does NOT compile it into the task fabric — agent
+topology is not work (see `cmd/ares/serve_peer.go`). Only session/plan graphs
+are compiled into executable tasks (via `planprojection` /
+`Fabric.CompilePlan`).
 
 {{< maturity "Production" >}}

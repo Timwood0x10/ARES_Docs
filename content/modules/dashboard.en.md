@@ -1,11 +1,16 @@
----
+
 title: "dashboard"
 description: "Web dashboard service, agent topology DAG, monitoring UI endpoints, and the intelligence engine for the ARES runtime."
 weight: 240
 maturity: "Production"
 ---
+> **Status (verified 2026-09 against source tree):** There is no
+> `internal/dashboard` package. Dashboard HTTP surfaces live in `cmd/ares`
+> (`agent_routes_*.go`, `dashboard.go`) and `internal/introspect` (`Handler`,
+> `ControlServer`, `CollabReporter`, `FlightProvider`). Source is authoritative.
 
-The `dashboard` package (`internal/dashboard`) is the unified web layer for
+
+The `dashboard` package (`internal/introspect`) is the unified web layer for
 observing and operating the ARES runtime. It exposes a v2 API over HTTP and
 WebSocket, runs a background intelligence engine that scores agent health and
 detects anomalies, and bridges the chaos arena and flight recorder into the
@@ -126,7 +131,7 @@ type AgentLister interface {
 
 | Type | Purpose | Key methods |
 |------|---------|-------------|
-| `APIv2` | Unified dashboard API router | `NewAPIv2`, `Handler`, `MountGinRoutes`, `SetArena`, `SetSurvival`, `SetIntelligence`, `SetEvalMux`, `SetMemoryMux`, `SetRetrievalMux`, `SetAPIKey` |
+| `APIv2` | Unified dashboard API router | `NewAPIv2`, `Handler`, ServeHTTP, `SetArena`, `SetSurvival`, `SetIntelligence`, `SetEvalMux`, `SetMemoryMux`, `SetRetrievalMux`, `SetAPIKey` |
 | `Orchestrator` | Manages agent creation, execution, and resurrection | `NewOrchestrator`, `CreateAgent`, `GetAgent`, `CancelAgent`, `ListAgents`, `SetHub`, `SetEventStore`, `SetFlightRecorder`, `SetTemplates`, `SetToolAliases`, `Stop` |
 | `WSHub` | WebSocket hub with channel-based pub/sub | `NewWSHub`, `Run`, `Stop`, `BroadcastToChannel`, `BroadcastAll`, `Register`, `Unregister`, `ClientCount`, `ChannelCount` |
 | `WSClient` | Single WebSocket connection | `NewWSClient`, `Subscribe`, `Unsubscribe`, `Start`, `Wait`, `ReadPump`, `WritePump` |
@@ -184,9 +189,8 @@ both translations.
 
 ## Maturity
 
-Production. The package has comprehensive tests (`api_test.go`,
-`orchestrator_test.go`, `event_bridge_test.go`, `ws_hub_test.go`,
-`service_test.go`), is wired into the SDK entry points via `MountGinRoutes`
+Production. The package has comprehensive tests (, ,
+), is wired into the SDK entry points via ServeHTTP
 and the embedded static console, and carries no experimental markers.
 
 {{< maturity "Production" >}}

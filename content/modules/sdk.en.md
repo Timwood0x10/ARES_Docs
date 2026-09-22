@@ -213,7 +213,7 @@ type MCPConn struct {
 | `New(opts ...Option) (*Runtime, error)` | Error-returning constructor used by production code. |
 | `Runtime.Close()` | Cancels background goroutines, closes LLM, memory, and MCP clients. |
 | `Runtime.NewAgent` | Builds an `Agent` bound to this runtime from `AgentOption`s. |
-| `Runtime.NewTeam` | Builds a `Team` (leader + members) for multi-agent orchestration. |
+| `Runtime.NewTeam` (**removed**: no `NewTeam`/`Team` symbols in source — see note below) | Builds a `Team` (leader + members) for multi-agent orchestration. |
 | `Runtime.Evolve` | Runs a 3-generation GA cycle, scoring strategies by real execution. |
 | `Runtime.KnowledgeStore` | Returns the AKF store (in-memory, SQLite, or Postgres) when knowledge is enabled. |
 | `Agent.Run` | ReAct loop: build messages, generate, execute tools, emit events, return `Result`. |
@@ -226,22 +226,22 @@ type MCPConn struct {
 
 ## Module collaboration
 
-- `sdk` -> `api/core` for `LLMConfig`, `BaseConfig`, `LLMMessage`, `Tool`,
+- `sdk` -> `internal/llmcore` for `LLMConfig`, `BaseConfig`, `LLMMessage`, `Tool`,
   `GenerateRequest`, `LLMProvider` constants.
-- `sdk` -> `api/service/llm` for the `llm.Service` that performs generation
+- `sdk` -> `internal/llmservice` for the `llm.Service` that performs generation
   with fallback chains.
-- `sdk` -> `api/tools` for the `tools.Registry` and `tools.Tool` interface.
-- `sdk` -> `api/mcp` for stdio MCP clients whose tools are adapted via the
+- `sdk` -> `internal/apitools` for the `tools.Registry` and `tools.Tool` interface.
+- `sdk` -> `internal/mcpclient` for stdio MCP clients whose tools are adapted via the
   internal `mcpToolAdapter`.
-- `sdk` -> `internal/ares_memory` for the `MemoryManager` (sessions, RAG,
+- `sdk` -> `internal/runtime/memory` for the `MemoryManager` (sessions, RAG,
   distillation) wired by `wireMemory`.
 - `sdk` -> `internal/knowledge` and `internal/knowledge/runtime` for the AKF
   Knowledge Fabric runtime, providers, linkers, reducers, and stores.
-- `sdk` -> `internal/ares_evolution` (genome, mutation) and
+- `sdk` -> `internal/runtime/ares_evolution` (genome, mutation) and
   `internal/ares_bootstrap` for the strategy evolution and hot-update wiring.
 - `sdk` -> `internal/ares_events` for the event store and `TaskCompleted`
   emission consumed by the distillation subscriber.
-- `sdk` -> `internal/ares_experience` for `DistillationService` and the AKG
+- `sdk` -> `internal/runtime/memory/experience` for `DistillationService` and the AKG
   `DistillBridge` that distils conversations into knowledge objects.
 
 ## Extension points
@@ -278,5 +278,16 @@ is covered by `sdk_test.go`, `config_test.go`, and the `_test.go` files for
 memory, evolution, distillation, and AKF wiring, exposes no experimental
 markers, and integrates every internal subsystem through `New` /
 `NewRuntime`.
+
+
+## ConfigFile surface notes (verified)
+
+- `ConfigFile.Tasks.WaitTimeout` mirrors ares.yaml `tasks.wait_timeout`;
+  consumed by `ares run` as the agent.Run context timeout (hard cap 300s,
+  unset default 120s). Validation rejects unparseable/non-positive values.
+- `ConfigFile.Memory.Session.MaxHistory` mirrors `memory.session.max_history`
+  (session store window; distinct from read-side `memory.max_history`).
+- `ares run` accepts no configuration flags — only `-c` (config path).
+Configuration travels exclusively through ares.yaml.
 
 {{< maturity "Production" >}}

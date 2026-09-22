@@ -18,10 +18,22 @@ graph (AKG), strategy evolution, and MCP integration.
   failover across fallback providers.
 - **Tool calling** — built-in tools, custom tools, MCP-discovered tools, and a
   capability planner for intent-based tool resolution.
-- **Strategy evolution** — GA-based optimization of agent instructions and LLM
-  parameters, with a coordinator that applies patches from multiple sources.
+- **Agent OS kernel** — agents are scheduled processes, not workflow nodes.
+  Work is durable `Task` intent (checkpoint + lease + epoch fencing); the
+  kernel scheduler drives `Schedule → Acquire → RunQuantum → finalize`, so an
+  agent dying does not kill the task (lease expiry requeues it).
+- **Dynamic graphs** — the live topology is a `MutableDAG`
+  (`internal/fabric/task/workflow/engine`): session L2 graphs grow per
+  quantum (plan/tool/answer nodes) and compile incrementally into the task
+  fabric via `planprojection`; evolution structure patches mutate DAG objects
+  in place. See the workflow module page.
+- **Strategy evolution** — GA over instruction/LLM-parameter strategies:
+  population scoring, lifecycle gates (shadow/eval/rollback) and a
+  coordinator applying patches from multiple sources. Verified gate
+  semantics documented on the ares_evolution module page.
 - **Bilingual documentation** — every module page is available in English and
-  Chinese, kept in sync against the real source code.
+  Chinese. Pages are audited against the source tree; where a page lags,
+  the source is authoritative.
 
 ## Explore
 

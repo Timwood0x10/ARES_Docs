@@ -5,7 +5,7 @@ weight: 30
 maturity: "Production"
 ---
 
-`tools` 模块横跨三处：`api/tools`（公开的 `Tool` 接口、`Registry`、
+`tools` 模块横跨三处：`internal/apitools` (re-exported via `sdk`/`api` as `tools`)（公开的 `Tool` 接口、`Registry`、
 `ToolFunc` 以及 planner 的再导出）、`internal/tools/resources`（内部
 `core.Registry` 与内置工具实现）、`internal/tools/planner`（基于意图的
 能力规划器与执行桥）。
@@ -140,7 +140,7 @@ func NewBridge(r *Registry, p *Planner) (*Bridge, error)
   `core.Registry`。
 - `Registry.PlannerProvider()` 返回的 `RegistryPlannerProvider` 通过结构
   化类型（`ListTools`、`GetToolCapabilities`）满足 `planner.ToolProvider`，
-  使 planner 无需导入 `api/tools` 即可解析能力。
+  使 planner 无需导入 `internal/apitools` (re-exported via `sdk`/`api` as `tools`) 即可解析能力。
 - `tools.NewPlanner(r)` 串联 `NewRuleBasedAnalyzer` ->
   `NewCapabilityPlanner` -> `NewToolResolver` -> `NewEvidenceScorer` ->
   `NewExecutionPlanner`，背后是 `MemoryEvidenceStore`。
@@ -182,5 +182,14 @@ Production。本模块由 `tools_test.go`、`planner_test.go`、
 `bridge_test.go`、`evidence_test.go`、`dag_test.go`、
 `integration_test.go` 覆盖，已通过 `sdk.WithTool`/
 `runtime.RegisterTool` 接入 SDK，无任何实验性标记。
+
+
+## file_tools 沙箱（serve 路径）
+
+ares.yaml 的 `tools.file_sandbox_dir` 是 file_tools 路径穿越沙箱的根目录——
+agent 可读写的范围。空值（默认）经 `ResolveFileToolsAllowedDir` 回退到进程
+私有临时目录，**不是**工作目录：从仓库启动 serve 时，agent 在该键指向目标
+工作区之前碰不到仓库（或任何项目数据）。被拒路径的错误信息会点名该配置键。
+`ares init` 文档与 quick-start 均覆盖此键。
 
 {{< maturity "Production" >}}

@@ -5,10 +5,16 @@ weight: 109
 maturity: "Production"
 ---
 
-The `internal/agentfabric` package (package `agentfabric`) is the **Agent
+> **Status (verified 2026-09 against the source tree):** the package lives at
+> `internal/fabric/agent` (package name remains `agentfabric`; relocated from
+> `internal/agentfabric`). `SetRunning` / `SetIdle` and the `StateRunning`
+> agent state were removed as dead code — the lifecycle states are now
+> `IDLE` / `SUSPENDED` / `RETIRED`. Source is authoritative.
+
+The `internal/fabric/agent` package (package `agentfabric`) is the **Agent
 Lifecycle** pillar of the ARES Kernel. It owns the agent registry, the Process
 Tree (spawn provenance), the lifecycle state machine
-(`IDLE → RUNNING → SUSPENDED → {IDLE | RETIRED}`), the three-layer context
+(`IDLE → SUSPENDED → {IDLE | RETIRED}`), the three-layer context
 isolation (Task Shared / Agent Private / IPC), and the P5 resource-admission
 gate.
 
@@ -26,7 +32,8 @@ job) and does NOT do IPC (that is `agentipc`'s job).
   `StateIdle`), `Suspend` / `Resume` (Lifecycle pause, not Task pause),
   `Retire` (graceful permanent decommission), `Kill` (forceful crash path),
   `Recover` (restore cognitive state from a checkpoint into an IDLE or
-  SUSPENDED agent).
+  SUSPENDED agent). There is no `StateRunning` / `SetRunning` / `SetIdle` —
+  those transitions were removed as dead code.
 - Enforce P5 resource admission: `WithResourceBudget` sets the named quota;
   `Spawn` rejects with `ErrResourceQuotaExceeded` when the requested resources
   exceed the remaining budget; `UpdateResourceBudget` dynamically replaces the
@@ -57,13 +64,11 @@ flowchart TD
     ADM -- yes --> REG["agents[id] = a<br/>allocateLocked(claim)"]
     REG --> PT["children[parent] = append(..., id)<br/>Process Tree (provenance only)"]
     PT --> EVT["record EventAgentSpawned"]
-    SUS["Fabric.Suspend"] --> STS["StateIdle/Running → StateSuspended"]
+    SUS["Fabric.Suspend"] --> STS["StateIdle → StateSuspended"]
     RES["Fabric.Resume"] --> STR["StateSuspended → StateIdle"]
     RET["Fabric.Retire"] --> REL["releaseLocked(claim)<br/>State → StateRetired"]
-    KIL["Fabric.Kill"] --> DEL["delete(agents, id)<br/>releaseLocked(claim)<br/>children survive (Parent 死 ≠ Child 死)"]
+    KIL["Fabric.Kill"] --> DEL["delete(agents, id)<br/>releaseLocked(claim)<br/>children survive (Parent dies ≠ Child dies)"]
     REC["Fabric.Recover<br/>cognitive CognitiveState"] --> RCS["a.cognitive = cognitive<br/>StateSuspended → StateIdle"]
-    SCH["Scheduler"] --> SR["Fabric.SetRunning"]
-    SCH --> SI["Fabric.SetIdle"]
     CTX["Fabric.SetTaskContext"] --> TC["a.taskContext = cloneMap"]
     PRV["Fabric.SetPrivate"] --> PC["a.privateContext[key] = val<br/>(never bleeds into Task Shared)"]
     CV["Fabric.ContextView"] --> ISO["ContextView{TaskShared, Private}<br/>verify isolation"]
@@ -78,15 +83,11 @@ flowchart TD
 ```mermaid
 stateDiagram-v2
     [*] --> Idle: Spawn
-    Idle --> Running: SetRunning (Scheduler binds Task)
-    Running --> Idle: SetIdle (Task yields/completes)
     Idle --> Suspended: Suspend
-    Running --> Suspended: Suspend
     Suspended --> Idle: Resume
     Idle --> Retired: Retire
     Suspended --> Retired: Retire
     Idle --> [*]: Kill
-    Running --> [*]: Kill
     Suspended --> [*]: Kill
     note right of Retired
         Retired is terminal;
@@ -134,11 +135,6 @@ func (f *Fabric) Retire(ctx context.Context, agentID string) error
 func (f *Fabric) Kill(ctx context.Context, agentID string) error
 func (f *Fabric) Recover(ctx context.Context, agentID string, cognitive CognitiveState) error
 
-// --- Internal scheduler hooks (not public lifecycle primitives) ---
-
-func (f *Fabric) SetRunning(agentID string) error
-func (f *Fabric) SetIdle(agentID string) error
-
 // --- Three-layer context (design §13: do not share one brain) ---
 
 func (f *Fabric) SetTaskContext(agentID string, taskCtx map[string]any) error
@@ -157,10 +153,9 @@ func (f *Fabric) CheckpointCognitive(agentID string) (CognitiveState, error)
 
 type AgentState string
 const (
-    StateIdle     AgentState = "IDLE"
-    StateRunning  AgentState = "RUNNING"
+    StateIdle      AgentState = "IDLE"
     StateSuspended AgentState = "SUSPENDED"
-    StateRetired  AgentState = "RETIRED"
+    StateRetired   AgentState = "RETIRED"
 )
 
 // Agent is a disposable, peer-equivalent cognitive process (design §3 + §13).
@@ -187,6 +182,7 @@ type Agent struct {
 // It is independently checkpointable — the Runtime does NOT depend on hidden
 // chain-of-thought, only on this durable state.
 type CognitiveState struct {
+    SchemaVersion int  // set by SetCognitiveState / Recover; 0 = legacy
     Context       any  // active reasoning context (task goal + constraints)
     Observation   any  // latest observation from environment/tools
     WorkingMemory any  // scratchpad for intermediate reasoning
@@ -200,12 +196,15 @@ type CognitiveState struct {
 // / policy, then creates the Agent + (optionally) a Task + the parent-child
 // provenance link.
 type SpawnSpec struct {
-    Identity     string           // requested agent id; "" means Fabric assigns one
-    Capabilities []string         // declared capabilities of the new agent
-    ParentID     string           // spawning agent's id ("" for a root agent)
-    TaskContext  map[string]any   // shared task state passed from parent (snapshot/projection)
-    Resources    map[string]any   // resource hints (quota/capability/policy validation surface)
-    Priority     float64          // scheduling priority (>= 0; 0 = normal; OS-thread analog)
+    Identity         string           // requested agent id; "" means Fabric assigns one
+    Capabilities     []string         // declared capabilities of the new agent
+    ParentID         string           // spawning agent's id ("" for a root agent)
+    TaskContext      map[string]any   // shared task state passed from parent (snapshot/projection)
+    Resources        map[string]any   // resource hints (quota/capability/policy validation surface)
+    Governance       Governance       // cognitive-execution budget (token/tool/deadline); zero = unlimited
+    Priority         float64          // scheduling priority (>= 0; 0 = normal; OS-thread analog)
+    CognitionFactory CognitionFactory // execution body; nil = managed-only, no quantum execution
+    ExperiencePrior  any              // distilled prior written into CognitiveState.Context at spawn
 }
 
 // --- Context layer (design §13: three-layer context) ---
@@ -250,10 +249,9 @@ const (
 var (
     ErrAgentNotFound
     ErrAgentExists
-    ErrAgentNotIdle
     ErrAgentRetired
     ErrAgentNotSuspended
-    ErrAgentRunning
+    ErrAgentNotExecutable
     ErrInvalidSpawnSpec
     ErrResourceQuotaExceeded
 )
@@ -265,12 +263,11 @@ var (
 | --- | --- |
 | `Fabric` | Agent Lifecycle pillar; owns agent registry, Process Tree, resource budget, event sink. |
 | `NewFabric` | Constructs an empty `Fabric`; chain `WithEventSink` / `WithClock` / `WithResourceBudget`. |
-| `Spawn` | Kernel syscall creating a new Agent in `StateIdle`; validates spec, checks P5 quota, records parent-child provenance. |
+| `Spawn` | Kernel syscall creating a new Agent in `StateIdle`; validates spec, checks P5 quota, records parent-child provenance. Accepts `Governance`, `CognitionFactory`, and `ExperiencePrior` in `SpawnSpec`. |
 | `Suspend` / `Resume` | Lifecycle pause (not Task pause); in-memory state preserved; Resume relaunches the SAME instance. |
 | `Retire` | Graceful permanent decommission; agent must NOT be `RUNNING` (suspend first); resource claim released; children survive. |
 | `Kill` | Forceful crash path; works on any state; agent entry removed; children survive (Parent 死 ≠ Child 死); resource claim released. |
 | `Recover` | Restores cognitive state from a checkpoint into an IDLE/SUSPENDED agent — how a new Agent resumes a dead one's cognition (§13 invariant #2). |
-| `SetRunning` / `SetIdle` | Internal scheduler hooks (not public lifecycle primitives); mark agent RUNNING when Scheduler binds a Task, IDLE when Task yields/completes. |
 | `SetTaskContext` / `TaskContext` | Task Shared State layer; copied so the agent never mutates the caller's map. |
 | `SetPrivate` / `Private` | Agent Private State layer (scratchpad); NEVER leaks to Task Shared or to other agents (§13 invariant #5 + #6). |
 | `ContextView` | Read-only snapshot of Task Shared + Private layers; used to verify isolation: Private must not appear in TaskShared. |
@@ -281,18 +278,21 @@ var (
 
 ## Module collaboration
 
-- `agentfabric` -> `internal/taskfabric`: the Scheduler picks among
+- `agentfabric` -> `internal/fabric/task`: the Scheduler picks among
   `agentfabric.Agent` instances; `Agent.Capabilities` / `Load` / `Confidence`
   / `Priority` populate `taskfabric.Candidate`.
 - `agentfabric` -> `internal/agentipc`: the IPC pillar addresses agents by
   `Agent.Identity`; `Children` provides the provenance graph for IPC policy.
-- `agentfabric` -> `internal/ares_skills` (via `Confidence` field): the
-  Experience `BestMatch` `SuccessRate` is the natural confidence prior.
+- `agentfabric` -> `internal/runtime/protocol/skills` (via `Confidence`
+  field): the Experience `BestMatch` `SuccessRate` is the natural confidence
+  prior.
 - `agentfabric` -> `internal/ares_events` (via `EventSink`): lifecycle events
   are best-effort persisted for cross-restart rebuild; the in-memory registry
   is authoritative within a process.
-- `agentfabric` -> `internal/system_runtime`: the Fabric is registered as a
-  component and started/stopped by the Orchestrator.
+- `agentfabric` -> `internal/kernel` (System Runtime control plane): the
+  Fabric is adopted as a component (`Orchestrator.Adopt`) and stopped by the
+  Orchestrator; wiring lives in `cmd/ares/kernel.go` and
+  `internal/ares_bootstrap/system_runtime_wiring.go`.
 
 ## Extension points
 
@@ -327,10 +327,11 @@ only the prose differs.
 
 ## Maturity
 
-Production. The package is covered by `agent.go` / `lifecycle.go` /
-`context.go` / `resource.go` tests including `resource_test.go` and
-`fabric_test.go`. It implements the agent lifecycle state machine with P5
-resource admission, integrates with the ARES Kernel via `system_runtime`, and
-exposes no experimental markers.
+Production. The package is covered by `fabric_test.go`, `resource_test.go`,
+`agent_medium_test.go`, `governance_test.go`, e2e spawn/IPC/synthesis tests,
+and related lifecycle/context tests. It implements the agent lifecycle state
+machine with P5 resource admission, integrates with the ARES Kernel via
+`internal/kernel` (System Runtime adoption), and exposes no experimental
+markers.
 
 {{< maturity "Production" >}}

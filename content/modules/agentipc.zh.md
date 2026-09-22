@@ -6,9 +6,9 @@ maturity: "Production"
 ---
 
 `internal/agentipc` 包（包名 `agentipc`）是 ARES Kernel 的 **IPC** 支柱。
-它实现了同级认知进程（A ≡ B ≡ C）之间通信的对等消息总线，以及让旧
-leader 路径与新 Task Fabric → Scheduler → Agent 路径在 feature flag 下并行
-运行的双轨调度策略。
+它实现了同级认知进程（A ≡ B ≡ C）之间通信的对等消息总线，以及
+`PolicyFlag` / `DualTrackDispatcher` 策略词表。生产仅接线 Task Fabric 路径
+（`PolicyTaskFabric`，shadow 关闭）；旧 leader 轨道已删除。
 
 设计不变量（`ares-runtime.md` §13）：
 
@@ -33,15 +33,13 @@ leader 路径与新 Task Fabric → Scheduler → Agent 路径在 feature flag �
   - `Subscribe` / `Unsubscribe`——topic 兴趣注册。
   - `Broadcast`——向某 topic 的所有订阅者 fire-and-forget 扇出；返回成功
     投递计数。
-- 提供高级协作模式（v0.4.0 M1）——在 peer 原语之上的组合层：
-  `DelegateToSpecialist`（委托）、`Pipeline`（A → B → C 有序执行）、
-  `Orchestrate`（coordinator 并行扇出到多个 worker 并聚合结果）。
-- 提供双轨调度策略（`PolicyFlag`、`DualTrackDispatcher`、`Dispatcher`）：
-  `PolicyLegacyLeader`（旧 leader+sub 派发）与 `PolicyTaskFabric`（新
-  Kernel 路径）共存；`PolicyFlag` 原子选择活动路径，live flip 在下一次
-  dispatch 生效，无需重启。
-- 提供 shadow-mode 等价性验证：shadow 开启时，非活动路径也运行，并与活动
-  路径比较结果；`Mismatches()` 暴露计数（"双轨等价"验证面）。
+- 提供双轨调度策略词表（`PolicyFlag`、`DualTrackDispatcher`、
+  `Dispatcher`）：`PolicyLegacy` 作为库常量保留以兼容配置；
+  `PolicyTaskFabric` 是唯一生产策略。生产接线 nil legacy 轨道且 shadow 关闭
+  ——按策略路由的 dispatch 入口已删除（HTTP 直接向 Task Fabric 提交任务，
+  内核调度器排空）。
+- 提供协作观测：`WithCollaborationObserver` 记录 Request/Delegate/Handoff
+  回执与 Send 投递回执供进化反馈使用；`DeadLetters()` 暴露失败请求。
 
 ## 架构图
 
@@ -61,11 +59,10 @@ flowchart TD
     DLG --> REQ
     HND --> REQ
     SUB --> BCT
-    PF["PolicyFlag (atomic)"] --> DTD["DualTrackDispatcher.Dispatch"]
-    DTD --> LEG["legacy Dispatcher.D"]
-    DTD --> NEW["new-path Dispatcher.D"]
-    DTD -- shadow on --> CMP["compareShadow<br/>count mismatch"]
-    CMP --> MS["Mismatches()"]
+    PF["PolicyFlag (atomic)"] --> DTD["DualTrackDispatcher facade"]
+    DTD --> NEW["new-path Dispatcher.D (only production track)"]
+    OBS["WithCollaborationObserver"] --> FB["feedback.CollaborationOutcome"]
+    DL["DeadLetters()"] --> DLS["failed requests"]
 ```
 
 ## 外部接口
@@ -86,6 +83,9 @@ type Bus struct {
 }
 func NewBus() *Bus
 func (b *Bus) WithClock(now func() time.Time) *Bus
+func (b *Bus) WithLogger(logger *slog.Logger) *Bus
+func (b *Bus) WithCollaborationObserver(obs CollaborationObserver) *Bus
+func (b *Bus) DeadLetters() *DeadLetterStore
 func (b *Bus) Register(agentID string, h Handler) error
 func (b *Bus) Unregister(agentID string)
 
@@ -100,30 +100,11 @@ func (b *Bus) Subscribe(agentID, topic string) error
 func (b *Bus) Unsubscribe(agentID, topic string)
 func (b *Bus) Broadcast(ctx context.Context, from, topic string, payload any) int
 
-// --- High-level collaboration patterns (v0.4.0 M1) ---
-
-func (b *Bus) DelegateToSpecialist(ctx context.Context, delegator, specialist, taskID, specialization string, payload any, timeout time.Duration) (*Message, error)
-func (b *Bus) Orchestrate(ctx context.Context, coordinator string, workers []string, taskID string, payload any, timeout time.Duration) ([]OrchestrationResult, error)
-
-type Pipeline struct {
-    bus     *Bus
-    stages  []string
-    timeout time.Duration
-}
-func NewPipeline(bus *Bus, stages []string, timeout time.Duration) (*Pipeline, error)
-func (p *Pipeline) Run(ctx context.Context, from string, input any) (*Message, error)
-
-type OrchestrationResult struct {
-    Worker string
-    Reply  *Message
-    Err    error
-}
-
 // --- Dual-track dispatch policy (P4 D4) ---
 
 type ExecutionPolicy int
 const (
-    PolicyLegacyLeader ExecutionPolicy = iota
+    PolicyLegacy ExecutionPolicy = iota
     PolicyTaskFabric
 )
 type PolicyFlag struct {
@@ -142,14 +123,18 @@ type DualTrackDispatcher struct {
     flag    *PolicyFlag
     legacy  Dispatcher
     newPath Dispatcher
-    // shadow bool, mismatches int
+    // shadow bool — facade state; the routing entry that used it was removed
 }
 func NewDualTrackDispatcher(flag *PolicyFlag, legacy, newPath Dispatcher, shadow bool) *DualTrackDispatcher
-func (d *DualTrackDispatcher) Dispatch(ctx context.Context, agentID, taskID string, payload any) error
 func (d *DualTrackDispatcher) SetShadow(shadow bool)
 func (d *DualTrackDispatcher) SetNewPath(newPath Dispatcher)
 func (d *DualTrackDispatcher) NewPath() Dispatcher
-func (d *DualTrackDispatcher) Mismatches() int
+
+// --- Collaboration observer (feedback) ---
+
+type CollaborationObserver interface {
+    // receives feedback.CollaborationOutcome after each observed attempt
+}
 
 // --- Message ---
 
@@ -171,9 +156,7 @@ var (
     ErrNoHandler
     ErrTimeout
     ErrInvalidMessage
-    ErrPipelineEmpty
-    ErrNoWorkers
-    ErrDispatcherNotRegistered
+    ErrHandlerPanic
 )
 ```
 
@@ -190,40 +173,38 @@ var (
 | `Handoff` | 对等任务所有权转移；结构化 payload（`task_id` + 上下文快照 + artifacts）；接收方确认；不经 Scheduler。 |
 | `Subscribe` / `Unsubscribe` | Topic 兴趣注册。 |
 | `Broadcast` | 向某 topic 的所有订阅者 fire-and-forget 扇出；返回成功投递计数。 |
-| `DelegateToSpecialist` | 委托模式（v0.4.0 M1-1）：Leader → Specialist 带结果返回。 |
-| `Pipeline` / `NewPipeline` / `Run` | 流水线模式（v0.4.0 M1-2）：A → B → C 有序执行，数据经 IPC 流动。 |
-| `Orchestrate` | 编排模式（v0.4.0 M1-3）：coordinator 并行扇出到多个 worker 并聚合结果。 |
-| `PolicyFlag` | 原子 feature flag 选择 `PolicyLegacyLeader` vs. `PolicyTaskFabric`；live flip 下次 dispatch 生效。 |
-| `DualTrackDispatcher` / `Dispatcher` | 双轨调度：两路径共存；`Dispatch` 路由到活动路径；shadow 模式比较结果并计数 mismatch。 |
+| `DeadLetters` / `WithCollaborationObserver` | 失败请求存储与协作回执观察器，喂给进化反馈回路。 |
+| `PolicyFlag` | 原子 flag 记录 `PolicyLegacy` vs `PolicyTaskFabric`；生产始于 `PolicyTaskFabric`。 |
+| `DualTrackDispatcher` / `Dispatcher` | 可变 dispatcher facade：`SetNewPath` / `SetShadow` 用于启动接线；生产 legacy 为 nil。 |
 | `Message` / `Handler` | 对等 IPC 单元与投递回调签名。 |
 
 ## 模块协作
 
-- `agentipc` -> `internal/agentfabric`：总线按 `agentfabric.Agent.Identity`
+- `agentipc` -> `internal/fabric/agent`：总线按 `agentfabric.Agent.Identity`
   寻址；`Children` 为 IPC 策略提供溯源图。
-- `agentipc` -> `internal/taskfabric`：`Handoff` 是绕过 Scheduler 的对等
-  任务转移原语；新路径 dispatcher 经 `taskfabric` 路由。
-- `agentipc` -> `internal/agents/leader`：旧 dispatcher 经 leader+sub 派发
-  路径（`PolicyLegacyLeader`）。
-- `agentipc` -> `internal/system_runtime`：总线作为组件被注册，由
-  Orchestrator 启停。
+- `agentipc` -> `internal/fabric/task`：`Handoff` 是绕过 Scheduler 的对等
+  任务转移原语；生产 HTTP 直接向 Task Fabric 提交任务，内核调度器排空。
+- `agentipc` -> `internal/feedback`（经 `CollaborationObserver`）：Request /
+  Send 回执喂给进化协作通道，总线不导入 evolution 层。
+- `agentipc` -> `internal/kernel`（System Runtime 控制面）：总线与
+  dispatcher 经 `Orchestrator.Adopt` 注册为组件；接线在
+  `cmd/ares/kernel.go` 与 `internal/ares_bootstrap/system_runtime_wiring.go`。
 
 ## 扩展方式
 
 1. **注册智能体 handler**：通过 `Bus.Register(agentID, handler)`；handler
    接收 `*Message`，可同步返回 reply，也可稍后异步调用 `Reply`。
-2. **新增协作模式**：组合 peer 原语——v0.4.0 M1 的三个模式（委托/流水线/
-   编排）是 `Request` / `Reply` 之上的组合层，不改变总线原语。
-3. **Live flip 调度策略**：通过 `PolicyFlag.Set(PolicyTaskFabric)`；flag
-   原子读取，flip 在下次 dispatch 生效，无需重启。在同一临界区关闭 shadow
-   以避免双执行。
-4. **验证双轨等价**：legacy 活动时开启 shadow
-   （`NewDualTrackDispatcher(..., shadow: true)`）：新路径在 shadow 中
-   运行，结果被比较，`Mismatches()` 暴露计数。
-5. **注入确定性时钟**：通过 `Bus.WithClock(now)` 对 correlation id 配对
-   与超时进行密闭测试。
-6. **测试对等转移**：通过 `Handoff(from, to, taskID, snapshot, ttl)`：
+2. **观测协作结果**：通过 `Bus.WithCollaborationObserver(obs)`，使
+   Request/Delegate/Handoff 与 Send 回执喂给进化反馈回路；总线不导入
+   evolution。
+3. **记录失败请求**：通过 `Bus.DeadLetters()` 暴露不可达 / 超时请求
+  （观测与重投递）。
+4. **注入确定性时钟**：通过 `Bus.WithClock(now)` 对 correlation id 配对
+  与超时进行密闭测试。
+5. **测试对等转移**：通过 `Handoff(from, to, taskID, snapshot, ttl)`：
    接收方确认，所有权对等移动，不经 Scheduler。
+6. **遏制 handler panic** —— panic 的 handler 向调用方返回
+   `ErrHandlerPanic` 而非杀死进程；可选 `WithLogger` 报告 panic。
 
 ## 双语状态
 
@@ -232,9 +213,10 @@ var (
 
 ## 成熟度
 
-Production。该包由 `bus_test.go`、`collaboration_test.go`、
-`collaboration_bench_test.go`、`benchmark_test.go` 覆盖。它实现了完整的
-peer IPC 原语集与双轨调度策略，通过 `system_runtime` 集成进 ARES Kernel，
-且不含任何实验性标记。
+Production。该包由 `bus_test.go`、`collaboration_observer_test.go`、
+`deadletter_test.go`、`trace_test.go`、`e2e_spawn_ipc_test.go`、
+`benchmark_test.go` 覆盖。它实现了完整的 peer IPC 原语集与调度策略词表，
+经 `internal/kernel`（System Runtime 采纳）集成进 ARES Kernel，且不含任何
+实验性标记。
 
 {{< maturity "Production" >}}

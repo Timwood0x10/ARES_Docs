@@ -192,7 +192,7 @@ func ScoreHybrid(objects []*KnowledgeObject, reps map[string]*Representation, qu
 ## 成熟度
 
 Experimental。该子系统功能完备，并由 `knowledge_test.go`、`quality_test.go`、
-`hybrid_test.go`、`relation_extract_test.go`、`vector_index_test.go`、`e2e_test.go` 与
+`hybrid_test.go`、`relation_extract_test.go`、`retriever_test.go`、`e2e_test.go` 与
 `docs_articles_test.go` 覆盖，但 AKG 设计说明将公开 API 标记为正在大幅重构。存储后端、
 质量门权重与生命周期状态可能在小版本间变更。消费者应固定版本并预期破坏性变更。
 

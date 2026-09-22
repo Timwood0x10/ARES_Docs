@@ -10,16 +10,21 @@ ARES 在每一层都设计了扩展点。以下各节引用了需要实现的确
 
 SDK 内置支持 OpenAI、Ollama、Anthropic 与 OpenRouter。使用自定义供应商：
 
-1. 实现 `llm.Client` 接口（`Generate`、`Chat`、`GenerateEmbedding`、
-   `GenerateStream`）。
-2. 构造 `*core.LLMConfig`，填入供应商名称与 base URL。
-3. 通过 `sdk.WithLLMConfig(cfg)` 传入，或用 `sdk.WithFallbackLLM(cfg)`
-   添加故障转移。
+`llm.Client` 是具体结构体（不是接口）：provider 由配置选择，
+`internal/llm/chat.go` 按 provider 分派并归一到 `llmcore.*` 消息/响应类型。
+运行期故障转移只有一条链 `llm.FailoverClient`；embedding 调用在
+`llmservice.Service` 上，不在 `llm.Client` 上。
+
+1. 构造 provider 配置（`llm.Config` / `core.LLMConfig`），填入供应商名称与
+   base URL。
+2. 通过 `sdk.WithLLMConfig(cfg)` 传入；用 `sdk.WithFallbackLLM(cfg)` 添加
+   故障转移（可多次调用追加）。
+3. serve 部署下，agent 需要触碰工作区文件时必须在 ares.yaml 设置
+   `tools.file_sandbox_dir`——默认沙箱是进程私有临时目录，不是工作目录。
 
 ## 新增自定义工具
 
-1. 实现 `tools.Tool` 接口（`Name`、`Description`、`Execute`、`Parameters`、
-   `Capabilities`），或用 `tools.ToolFunc` 包装函数。
+1. 实现 `tools.Tool` 接口（`Name`、`Description`、`Parameters`、`Execute`、`Capabilities`），或用 `tools.ToolFunc` 包装函数。
 2. 注册：`runtime.RegisterTool(myTool)`，或作为 `sdk.WithTool` agent 选项传入。
 3. 若需在 sub-agent 中注册幂等（可安全重试）工具，将 `ToolBinder` 类型断言
    为 `*toolBinder` 并调用 `BindIdempotentTool`。

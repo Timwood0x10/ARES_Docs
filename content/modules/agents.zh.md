@@ -139,7 +139,7 @@ func (s *Service) ListAgents(ctx context.Context, filter *core.AgentFilter) ([]*
 func (s *Service) ExecuteTask(ctx context.Context, task *core.Task) (*core.TaskResult, error)
 func (s *Service) GetTaskResult(ctx context.Context, taskID string) (*core.TaskResult, error)
 
-// internal/agents/leader
+// internal/agents (sub: base, lease, outputguard, peer, sub)
 type Agent interface{ base.Agent }
 
 type ProfileParser interface {
@@ -226,7 +226,7 @@ func NewToolBinder() ToolBinder
 
 type FallbackHandler func(ctx context.Context, task *models.Task) ([]*models.RecommendItem, string, error)
 type ChatClient interface {
-    Chat(ctx context.Context, messages []*core.LLMMessage, tools []core.Tool, params map[string]any) (*core.GenerateResponse, error)
+    Chat(ctx context.Context, messages []*llmcore.LLMMessage, tools []llmcore.Tool, params map[string]any) (*llmcore.GenerateResponse, error)
 }
 
 func New(
@@ -251,19 +251,19 @@ func DefaultSubAgentConfig(agentType models.AgentType) *SubAgentConfig
 
 func NewTaskExecutor(
     toolBinder ToolBinder,
-    llmAdapter output.LLMAdapter,
-    template *output.TemplateEngine,
+    llmAdapter llmservice client (post-F-07),
+    template *(removed: output package),
     promptTpl string,
-    validator *output.Validator,
+    validator *(removed: output package),
     maxRetries int,
     opts ...TaskExecutorOption,
 ) TaskExecutor
 func NewTaskExecutorWithValidation(
     toolBinder ToolBinder,
-    llmAdapter output.LLMAdapter,
-    template *output.TemplateEngine,
+    llmAdapter llmservice client (post-F-07),
+    template *(removed: output package),
     promptTpl string,
-    validator *output.Validator,
+    validator *(removed: output package),
     maxRetries int,
     retryOnFail bool,
     strictMode bool,
@@ -306,11 +306,11 @@ const leader.DefaultEventChanSize = 64
 ## 模块协作
 
 - `agents/base` -> `internal/core/models`（`AgentType` / `AgentStatus`）与
-  `internal/ares_protocol/ahp`（`AHPMessage`）。
+  `internal/runtime/protocol/ahp`（`AHPMessage`）。
 - `leader` -> `base`、`ahp`（`MessageQueue`、`HeartbeatMonitor`）、
   `ares_memory`、`ares_events`、`ares_callbacks`、`ares_experience`
   （`FeedbackService`）以及 `agents`（`StrategySource`）。
-- `sub` -> `base`、`ahp`、`ares_events`、`internal/llm/output`
+- `sub` -> `base`、`ahp`、`ares_events`、`internal/llmcore` (post-F-07)
   （`LLMAdapter`、`TemplateEngine`、`Validator`）、`internal/tools/resources/core`
   （`Registry`、`ToolSchema`、`Result`）以及 `agents`（`StrategySource`）。
 - `sub.taskExecutor` -> `core`（`LLMMessage`、`Tool`、`GenerateResponse`）以及
@@ -355,5 +355,15 @@ Production。leader、sub、base 包由 `agent_test.go`、`service_impl_test.go`
 `supervisor_test.go`、`planner_test.go`、`evaluator_test.go`、`recovery_test.go`、
 `checkpoint_test.go` 以及 sub-agent 测试套件覆盖；通过 `ares_runtime` 与 SDK
 集成到运行时；通过 `StatefulAgent` 实现复活；不含任何实验性标记。
+
+
+## 陈旧签名更正（0.4）
+
+本页旧版在 `sub.NewTaskExecutor` 引用了 `internal/llmcore` (post-F-07) 类型
+（`llmservice client (post-F-07)`、`(removed: output package)`、`(removed: output package)`），并把
+`internal/llmcore` (post-F-07) 列为 `sub` 的依赖。该包已整包删除（生产零调用，F-07）。
+当前生产接线：LLM 访问经 `internal/llm`（`Client`/`FailoverClient`）与
+`llmservice.Service`；工具调用类型为 `llmcore.*`。请以源码为准查阅
+`sub.NewTaskExecutor` 的现行签名，勿依赖本页任何历史片段。
 
 {{< maturity "Production" >}}

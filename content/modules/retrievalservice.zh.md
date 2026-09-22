@@ -9,7 +9,7 @@ maturity: "Beta"
 
 ## 职责
 
-`retrievalservice` 包（Go 导入路径 `internal/retrievalservice`，包名
+`retrievalservice` 包（Go 导入路径 `internal/knowledge/retriever`，包名
 `retrievalservice`）是租户作用域知识库操作的服务层。它包装 `core.RetrievalRepository`，
 提供校验、ID 生成、时间戳管理与分页，暴露精简的知识 CRUD 与搜索接口。
 
@@ -154,7 +154,7 @@ type RetrievalRepository interface {
 
 ## 成熟度
 
-Beta。该包功能完备，并由 `retrievalservice_test.go` 覆盖（涉及服务与内存仓储的 CRUD、搜索、
+Beta。该包功能完备，并由 `retriever_test.go` 覆盖（涉及服务与内存仓储的 CRUD、搜索、
 分页与租户隔离路径）。公开 `Service` API 稳定，但归为 Beta，因为仓储契约与检索模式
 （simple / advanced / hybrid）仍随存储层的嵌入与分块工作一同演进。
 

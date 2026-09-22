@@ -5,8 +5,19 @@ weight: 111
 maturity: "Production"
 ---
 
-`internal/agentloop` 包（package `agentloop`）提供了 **ReAct（推理+行动）执行循环**
-——驱动 Agent 推理和工具使用周期的核心迭代引擎。它从 `sdk.Agent.Run` 中提取出来，成为
+> **状态（2026-09 对照源码树核实）：** 不存在 `agentloop` 包（`internal/`
+> 下无该目录，也无代码 import 它）。现行等价路径：SDK 运行路径
+> （`sdk.Agent.Run`）走 L2 session core——ReAct 时代选项
+> （`WithHumanInput`、`WithMaxIterations`、`WithToolDiscovery`）不再塑造执行，
+> 且 `WithHumanInput` 返回 `ErrHumanInputUnsupported`。运行时工具发现位于
+> `internal/tools/toolsource`（`DiscoverToolsName = "discover_tools"`），
+> `ToolExpander` 在 `sdk/discovery.go`；`HumanInputFunc` 与 `FriendlyErr`
+> 仍在 `sdk`。`internal/runtime/loop.go` 是进化轮次循环插件
+> （`LoopPlugin`），不是 ReAct 引擎。以源码为准；下文为历史记录。
+
+
+`internal/agentloop` 包（package `agentloop`）曾提供 **ReAct（推理+行动）执行循环**
+——驱动 Agent 推理和工具使用周期的核心迭代引擎。它从 `sdk.Agent.Run` 中提取，成为
 一个可独立测试的单元，支持 Mock LLM、Mock 工具、Mock 事件和 Mock 记忆。
 
 该循环遵循严格的 **迭代 → 生成 → 工具调用 → 反馈** 模式：
@@ -79,8 +90,8 @@ type Engine struct {
 // --- Request / Result ---
 
 type Request struct {
-    Messages     []*core.LLMMessage
-    Tools        []core.Tool
+    Messages     []*llmcore.LLMMessage
+    Tools        []llmcore.Tool
     MaxIter      int
     MaxTokens    int
     Timeout      time.Duration
@@ -105,8 +116,8 @@ type Result struct {
 type HumanInputFunc func(ctx context.Context, toolName string, args map[string]any) (bool, error)
 
 type LLMCaller interface {
-    Generate(ctx context.Context, req *core.GenerateRequest) (*core.GenerateResponse, error)
-    GetProvider() core.LLMProvider
+    Generate(ctx context.Context, req *llmcore.GenerateRequest) (*llmcore.GenerateResponse, error)
+    GetProvider() llmcore.LLMProvider
 }
 
 type ToolExecutor interface {
@@ -114,7 +125,7 @@ type ToolExecutor interface {
 }
 
 type ToolExpander interface {
-    Expand(ctx context.Context, names []string) ([]core.Tool, error)
+    Expand(ctx context.Context, names []string) ([]llmcore.Tool, error)
 }
 
 type EventSink interface {
@@ -131,7 +142,7 @@ func (e *Engine) Run(ctx context.Context, req *Request) (*Result, error)
 
 // --- Helper ---
 
-func FriendlyErr(scope string, provider core.LLMProvider, origErr error) error
+func FriendlyErr(scope string, provider llmcore.LLMProvider, origErr error) error
 ```
 
 ## 关键类型与方法
@@ -155,12 +166,12 @@ func FriendlyErr(scope string, provider core.LLMProvider, origErr error) error
 - `agentloop` -> `internal/llm`（通过 `LLMCaller`）：使用完整消息历史和工具定义生成 LLM 响应。
 - `agentloop` -> `internal/tools`（通过 `ToolExecutor`）：执行工具调用并将结果反馈到循环中。
 - `agentloop` -> `internal/ares_events`（通过 `EventSink`）：为每次 LLM 调用、工具执行和任务完成发出结构化事件。
-- `agentloop` -> `internal/ares_memory`（通过 `MemorySink`）：持久化结构化记忆，用于 Agent 跨迭代回放。
-- `agentloop` -> `internal/core`（通过 `core.LLMMessage`、`core.GenerateRequest`、`core.GenerateResponse`、`core.Tool`、`core.ToolCall`、`core.LLMProvider`）：共享核心模型类型。
+- `agentloop` -> `internal/runtime/memory`（通过 `MemorySink`）：持久化结构化记忆，用于 Agent 跨迭代回放。
+- `agentloop` -> `internal/core`（通过 `llmcore.LLMMessage`、`llmcore.GenerateRequest`、`llmcore.GenerateResponse`、`core.Tool`、`llmcore.ToolCall`、`llmcore.LLMProvider`）：共享核心模型类型。
 
 ## 扩展点
 
-1. **替换 LLM 后端**：实现 `LLMCaller` 接口，引擎与提供者无关，仅依赖 `core.GenerateRequest` / `core.GenerateResponse`。
+1. **替换 LLM 后端**：实现 `LLMCaller` 接口，引擎与提供者无关，仅依赖 `llmcore.GenerateRequest` / `llmcore.GenerateResponse`。
 2. **添加人工审批**：提供 `HumanInputFunc`，引擎在每次工具调用前暂停并等待决策。
 3. **启用运行时工具发现**：接入 `ToolExpander`，当 LLM 调用 `discover_tools` 时，引擎提取请求的名称，展开并注入定义到下一轮。
 4. **检测循环**：通过 `Tracer` 字段，每次重要事件（迭代、工具调用、发现）都被追踪。
@@ -172,6 +183,8 @@ func FriendlyErr(scope string, provider core.LLMProvider, origErr error) error
 
 ## 成熟度
 
-Production。该包从生产环境的 `sdk.Agent.Run` 中提取，成为可独立测试的单元，支持 Mock LLM、Mock 工具、Mock 事件和 Mock 记忆。无实验性标记。
+包不存在（历史页）。当前源码树中无 `agentloop` 包；本页仅作提取版 ReAct
+引擎的记录。现行路径（`sdk.Agent.Run` L2、`internal/tools/toolsource`、
+`sdk/discovery.go`）有生产级测试。
 
 {{< maturity "Production" >}}

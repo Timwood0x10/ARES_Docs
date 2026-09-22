@@ -5,7 +5,7 @@ weight: 230
 maturity: "Beta"
 ---
 
-`ares_arena` 包（`internal/ares_arena`，导入路径 `arena`）是证明 ARES 为自愈运行时
+`ares_arena` 包（`internal/runtime/arena`，导入路径 `arena`）是证明 ARES 为自愈运行时
 的混沌工程层。它故意向运行中的 Agent 与 DAG 注入故障，记录结果，并将失败反馈给
 演化协调器与飞行记录器。恢复由既有的 resurrection 插件、failover 与 checkpoint
 机制处理。

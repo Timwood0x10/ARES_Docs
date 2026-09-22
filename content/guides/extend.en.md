@@ -12,16 +12,23 @@ the exact SDK option or interface to implement.
 The SDK ships with built-in support for OpenAI, Ollama, Anthropic, and
 OpenRouter. To use a custom provider:
 
-1. Implement the `llm.Client` interface (`Generate`, `Chat`,
-   `GenerateEmbedding`, `GenerateStream`).
-2. Construct a `*core.LLMConfig` with your provider name and base URL.
-3. Pass it via `sdk.WithLLMConfig(cfg)` or add failover with
-   `sdk.WithFallbackLLM(cfg)`.
+`llm.Client` is a concrete struct (not an interface): providers are
+selected by configuration, and `internal/llm/chat.go` dispatches per
+provider into the shared `llmcore.*` message/response types. Runtime
+failover is a single chain, `llm.FailoverClient`; embedding calls live on
+`llmservice.Service`, not on `llm.Client`.
+
+1. Construct a provider config (`llm.Config` / `core.LLMConfig`) with your
+   provider name and base URL.
+2. Pass it via `sdk.WithLLMConfig(cfg)`; add fallbacks with
+   `sdk.WithFallbackLLM(cfg)` (callable multiple times).
+3. For serve deployments, agents that must touch workspace files need
+   `tools.file_sandbox_dir` in ares.yaml — the default sandbox is a
+   process-private temp dir, not the working directory.
 
 ## Add a custom tool
 
-1. Implement the `tools.Tool` interface (`Name`, `Description`, `Execute`,
-   `Parameters`, `Capabilities`), or wrap a function with `tools.ToolFunc`.
+1. Implement the `tools.Tool` interface (`Name`, `Description`, `Parameters`, `Execute`, `Capabilities`), or wrap a function with `tools.ToolFunc`.
 2. Register it: `runtime.RegisterTool(myTool)`, or pass it as an
    `sdk.WithTool` agent option.
 3. For idempotent (retry-safe) tools in the sub-agent, type-assert the

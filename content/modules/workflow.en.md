@@ -1,11 +1,19 @@
 ---
 title: "workflow"
 description: "Unified DAG runner with serializable IR, scheduler, retry/recovery, HITL, loops, and idempotent checkpoint resume."
-weight: 100
+weight: 101
 maturity: "Production"
 ---
 
-The `internal/workflow` package is the single production execution path for
+> **Status (verified 2026-09 against the source tree):** no `internal/fabric/task/workflow`
+> package exists in the current repository — the IR/Runner described below is
+> not present as that package. The LIVE dynamic-graph machinery is
+> `internal/fabric/task/workflow/engine` (`MutableDAG`) plus
+> `internal/fabric/planprojection` (incremental compile into the task fabric);
+> see the current-tree section at the end of this page. Source is authoritative.
+
+
+The `internal/fabric/task/workflow` package is the single production execution path for
 DAG-based workflows. It defines a serializable intermediate representation
 (`WorkflowSpec`), a single `Runner` that consumes it, a `Scheduler` that
 topologically orders ready nodes, and an idempotent checkpoint protocol for
@@ -57,7 +65,7 @@ flowchart TD
 ## External interfaces
 
 ```go
-// internal/workflow
+// internal/fabric/task/workflow
 type NodeID string
 
 type WorkflowSpec struct {
@@ -349,3 +357,35 @@ tests, `diamond_test.go`, `edge_test.go`, `binding_contract_test.go`,
 experimental markers.
 
 {{< maturity "Production" >}}
+
+## MutableDAG — the live dynamic graph (current source tree)
+
+Location: `internal/fabric/task/workflow/engine/mutable_dag.go`
+(`type MutableDAG`).
+
+- **Structure**: a mutable DAG of `engine.Step` nodes (`ID`, `Name`,
+  `AgentType`, `Input`, `DependsOn`, `Metadata`, retry policy) with edge
+  operations (`AddNode`, `RemoveNode`, `ReplaceNode`, `AddEdge`,
+  `RemoveEdge`, `SetNodeMetadata`) that run cycle detection; failed edge ops
+  are rolled back by the caller (see `mutateSwapNodes` in the WorkflowGenome
+  for the rollback pattern). `StepIndex()` returns the current step map;
+  `StepSnapshot(id)` is the O(1) deep-copy read used by hot paths.
+- **Session L2 graphs**: `agentfabric.plannerCognition` grows one session
+  graph per quantum — plan nodes, tool nodes, and a terminal answer node —
+  inside this MutableDAG. Growth depth is bounded (`max_plan_depth`,
+  default 10); hitting the bound forces a content-less answer node
+  (synthesis / gap body — see the agentfabric page).
+- **Incremental compile into the task fabric**: `planprojection.
+  CompileCoordinator` subscribes to the graph's events and recompiles
+  changed graphs via `Fabric.CompilePlan` / `CompileNode`. Projection
+  (`ProjectStep`): `PlanStep.ID ← Step.ID`, `Capability ← Step.AgentType`,
+  `DependsOn` copied, payload = `{"input": Step.Input}` merged with step
+  metadata (metadata wins; carries `session_id`/`tenant_id`). Each compile
+  emits a `CompileRecord` (`generation`, `dag_version`, `compile_id`) —
+  surfaced on `/api/evolution/lifecycle`.
+- **Evolution coupling**: `WorkflowGenome` mutates DAG topology (insert /
+  remove / replace / parallelize / serialize / swap / split / merge /
+  set-metadata); structure patches act on the live agent DAG registered on
+  the runtime manager. That live agent DAG is NOT compiled into the task
+  fabric — agent topology is not executable work; only session/plan graphs
+  compile.

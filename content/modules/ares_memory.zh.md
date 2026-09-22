@@ -9,7 +9,7 @@ maturity: "Production"
 
 ## 职责
 
-`ares_memory` 包（Go 导入路径 `internal/ares_memory`，包名 `memory`）为 ARES
+`ares_memory` 包（Go 导入路径 `internal/runtime/memory`，包名 `memory`）为 ARES
 智能体框架提供统一记忆管理。它通过单一的 `MemoryManager` 接口协调四类关注点：
 
 - **会话记忆** —— 按用户隔离的对话历史，基于 TTL 过期回收。
@@ -90,7 +90,7 @@ func NewMemoryManagerWithDistiller(config *MemoryConfig, embedder apiembed.Embed
 func NewProductionMemoryManager(dbPool *postgres.Pool, embeddingClient *embedding.EmbeddingClient, config *MemoryConfig) (*ProductionMemoryManager, error)
 func DefaultMemoryConfig() *MemoryConfig
 
-// ContextRetriever (定义于 internal/ares_memory/context) 是 RAG 契约。
+// ContextRetriever (定义于 internal/runtime/memory/context) 是 RAG 契约。
 type ContextRetriever interface {
     Retrieve(ctx context.Context, input string, topK int) ([]ContextSnippet, error)
 }
@@ -104,7 +104,7 @@ type ContextRetriever interface {
 
 | 类型 / 方法 | 类别 | 用途 |
 | --- | --- | --- |
-| `MemoryManager` | interface | 16 个方法的记忆操作契约。 |
+| `MemoryManager` | interface | 17 个方法的记忆操作契约。 |
 | `memoryManager` | struct | 内存实现；协调 `SessionMemory`、`TaskMemory`、可选 distiller 与 RAG retriever。 |
 | `ProductionMemoryManager` | struct | PostgreSQL + pgvector 实现，含 `TenantGuard`、`WriteBuffer` 与仓储层存储。 |
 | `MemoryConfig` | struct | 配置：上限、TTL、向量维度、RAG 参数、结构化清洗开关。 |
@@ -135,7 +135,7 @@ type ContextRetriever interface {
 
 ## 扩展方式
 
-1. **新增存储后端。** 针对你的存储实现 `MemoryManager` 接口（全部 16 个方法），
+1. **新增存储后端。** 针对你的存储实现 `MemoryManager` 接口（全部 17 个方法），
    再提供一个与 `NewProductionMemoryManager` 对应的构造函数。调用方仅依赖接口契约。
 2. **插入自定义 RAG retriever。** 实现
    `ares_memory/context.ContextRetriever`（仅一个 `Retrieve` 方法），再通过

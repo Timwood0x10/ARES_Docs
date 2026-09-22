@@ -5,7 +5,7 @@ weight: 225
 maturity: "Beta"
 ---
 
-`ares_flight` 包（`internal/ares_flight`，导入路径 `flight`）是 ARES Agent 的运行时
+`ares_flight` 包（`internal/runtime/observability/flight`，导入路径 `flight`）是 ARES Agent 的运行时
 智能层。它记录执行时间线、调用图、决策、记忆管道与诊断，充当多 Agent 系统的
 “飞行记录器”。`Collector` 订阅事件存储，并填充由 `FlightRecorder` 聚合的内存数据
 结构。

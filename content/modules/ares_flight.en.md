@@ -5,7 +5,7 @@ weight: 225
 maturity: "Beta"
 ---
 
-The `ares_flight` package (`internal/ares_flight`, import path `flight`) is the
+The `ares_flight` package (`internal/runtime/observability/flight`, import path `flight`) is the
 runtime intelligence layer for ARES agents. It records execution timelines,
 call graphs, decisions, memory pipelines, and diagnostics, acting as the
 "flight recorder" for multi-agent systems. A `Collector` subscribes to the

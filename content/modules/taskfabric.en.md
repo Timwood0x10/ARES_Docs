@@ -5,12 +5,19 @@ weight: 110
 maturity: "Production"
 ---
 
-The `internal/taskfabric` package (package `taskfabric`) is the **Task
+> **Status (verified 2026-09 against the source tree):** the package lives at
+> `internal/fabric/task` (package name remains `taskfabric`; relocated from
+> `internal/taskfabric`). `AgentQueue` / `Steal` were removed as unused —
+> scheduling drains via the shared `ReadyTasks()` path in `internal/kernel`.
+> `CheckExpiredLeases` returns `[]string` (requeued task IDs), and `Fail`
+> takes a trailing `cause error`. Source is authoritative.
+
+The `internal/fabric/task` package (package `taskfabric`) is the **Task
 Scheduler** pillar of the ARES Kernel. It owns the durable-intent object model
 (`Task`), the lease-fenced state machine (`Acquire` / `Start` / `Yield` /
 `Preempt` / `Complete` / `Fail`), the execution-quantum primitive
-(`RunQuantum`), and the capability-aware work-stealing substrate
-(`AgentQueue`, `Steal`, `Schedule`, `Score`).
+(`RunQuantum`), and capability-aware scoring (`Schedule`, `Score`,
+`ScoreBreakdown`, `Pick`).
 
 The central invariant is **Agent dies ≠ Task dies**: a `Task` is durable and
 survives its owner through lease expiry and preserved checkpoints, while the
@@ -35,14 +42,14 @@ has since acquired.
   to SUSPENDED with the checkpoint preserved.
 - Provide capability-aware scheduling: `Score = capability_overlap ×
   (1 − load) × confidence × (1 + priority)`; `Schedule` picks the best capable
-  candidate and acquires the task on its behalf.
-- Provide capability-aware work stealing: per-agent `AgentQueue`s and
-  `Steal(from, capabilities, capabilityOf)` so an idle agent steals only tasks
-  it is capable of executing — "who is the best executor", not "whoever is
-  idle".
-- Requeue expired leases via `CheckExpiredLeases` — the crash-recovery
-  primitive that returns a dead agent's LEASED/RUNNING/SUSPENDED tasks to READY.
-- Emit the full task lifecycle event log (`task.created` … `task.stolen`),
+  candidate and acquires the task on its behalf. `ScoreBreakdown` exposes the
+  factor decomposition for the decision recorder; `Pick` has a last-resort
+  capability-overlap fallback when every scored candidate is zero.
+- Requeue expired leases via `CheckExpiredLeases` (returns the requeued task
+  IDs) — the crash-recovery primitive that returns a dead agent's
+  LEASED/RUNNING/SUSPENDED tasks to READY.
+- Emit the full task lifecycle event log (`task.created` … `task.expired`,
+  plus tombstone `task.deleted` and observability-only `task.updated`),
   optionally persisted to `ares_events.EventStore`; the log is the single
   source of truth from which Scheduler / Task / Lease state can be rebuilt.
 
@@ -65,9 +72,7 @@ flowchart TD
     STEP -- err --> FL["Fabric.Fail<br/>→ FAILED or requeue READY"]
     STEP -- !done --> YL["Fabric.Yield<br/>→ SUSPENDED, checkpoint preserved"]
     PRM["Fabric.Preempt<br/>cooperative, quantum boundary"] --> RDY["transition StateReady<br/>Owner=\"\" Lease=nil"]
-    EXP["Fabric.CheckExpiredLeases"] --> RQ2["expired LEASED/RUNNING/SUSPENDED<br/>→ READY (Agent 死亡 ≠ Task 死亡)"]
-    STL["AgentQueue.Steal<br/>from, capabilities, capabilityOf"] --> SKP["skip incapable tasks"]
-    SKP --> STLN["return stolen taskID"]
+    EXP["Fabric.CheckExpiredLeases<br/>returns requeued IDs"] --> RQ2["expired LEASED/RUNNING/SUSPENDED<br/>→ READY (Agent dies ≠ Task dies)"]
     REC["Fabric.record"] --> EV["TaskEvent log"]
     EV --> ES["ares_events.EventStore<br/>task.* (best-effort)"]
 ```
@@ -114,12 +119,13 @@ func (f *Fabric) Acquire(id, agentID string, ttl time.Duration) (uint64, error)
 func (f *Fabric) Start(id, agentID string, epoch uint64) error
 func (f *Fabric) Yield(id, agentID string, epoch uint64, checkpoint any) error
 func (f *Fabric) Complete(id, agentID string, epoch uint64) error
-func (f *Fabric) Fail(id, agentID string, epoch uint64) error
+func (f *Fabric) Fail(id, agentID string, epoch uint64, cause error) error
 func (f *Fabric) Release(id, agentID string, epoch uint64) error
 func (f *Fabric) Preempt(taskID, agentID string, epoch uint64, reason string) error
 
 // Crash recovery: requeue tasks whose lease expired without renewal.
-func (f *Fabric) CheckExpiredLeases() int
+// Returns the requeued task IDs.
+func (f *Fabric) CheckExpiredLeases() []string
 
 // Capability-aware scheduling (design §8).
 func (f *Fabric) Schedule(taskID string, candidates []Candidate, ttl time.Duration) (string, uint64, error)
@@ -181,6 +187,7 @@ type Candidate struct {
     Priority     float64         // >= 0; 0 = normal; OS-thread-priority analog
 }
 func Score(taskCapability string, c Candidate) float64
+func ScoreBreakdown(taskCapability string, c Candidate) ScoreParts
 func Pick(taskCapability string, candidates []Candidate) *Candidate
 
 type ConfidenceSource interface {
@@ -188,17 +195,6 @@ type ConfidenceSource interface {
     // 0 means "no experience yet" — the candidate keeps its declared confidence.
     Confidence(taskPattern string) float64
 }
-
-// --- Work stealing ---
-
-type AgentQueue struct {
-    AgentID string
-    // mu guards tasks
-}
-func NewAgentQueue(agentID string) *AgentQueue
-func (q *AgentQueue) Enqueue(taskID string)
-func (q *AgentQueue) Len() int
-func (q *AgentQueue) Steal(from *AgentQueue, capabilities []string, capabilityOf func(string) string) (string, bool)
 
 // --- Event log ---
 
@@ -215,7 +211,8 @@ const (
     EventTaskCompleted    EventType = "task.completed"
     EventTaskFailed       EventType = "task.failed"
     EventTaskExpired      EventType = "task.expired"
-    EventTaskStolen       EventType = "task.stolen"
+    EventTaskDeleted      EventType = "task.deleted"
+    EventTaskUpdated      EventType = "task.updated"
 )
 type TaskEvent struct {
     Type       EventType
@@ -255,11 +252,10 @@ var (
 | `Fabric.CheckExpiredLeases` | Crash-recovery primitive: requeues every task whose lease expired (Agent dies ≠ Task dies). |
 | `Fabric.Schedule` | Capability-aware dispatch: scores candidates, picks the best capable one, and acquires the task on its behalf. |
 | `Fabric.RunQuantum` | One execution quantum: `Start → step → {Complete | Fail | Yield}`. |
-| `Score` / `Pick` | The capability-aware scoring function and its argmax selector. |
+| `Score` / `ScoreBreakdown` / `Pick` | The capability-aware scoring function, its factor decomposition, and the argmax selector (with a last-resort overlap fallback). |
 | `Candidate` | The scheduler's per-agent input: capabilities, load, confidence, priority. |
 | `Lease` | TTL-based ownership lease with a fencing `Epoch`; same shape serves `TaskLease` / `ResourceLease` / `CapabilityLease`. |
 | `TaskEvent` / `Events` | The immutable lifecycle event log; replaying it rebuilds full task state. |
-| `AgentQueue` / `Steal` | Per-agent ready-queue and capability-aware stealing. |
 | `ConfidenceSource` | Experience-prior adapter feeding the scheduler's `confidence` term. |
 
 ## Module collaboration
@@ -267,16 +263,21 @@ var (
 - `taskfabric` -> `internal/ares_events`: optional `EventStore` for best-effort
   persistence of `task.*` lifecycle events; the in-memory log stays
   authoritative within a process.
-- `taskfabric` -> `internal/ares_skills` (via `ConfidenceSource`): the
+- `taskfabric` -> `internal/runtime/protocol/skills` / knowledge skills (via
+  `ConfidenceSource`): the
   Experience `BestMatch` `SuccessRate` is the natural confidence prior feeding
   `Score`'s `confidence` term.
-- `taskfabric` -> `internal/agentfabric`: the Scheduler picks among
+- `taskfabric` -> `internal/fabric/agent`: the Scheduler picks among
   `agentfabric.Agent` instances; `Agent.Capabilities` / `Load` / `Confidence`
   / `Priority` populate `Candidate`.
-- `taskfabric` -> `internal/agentipc`: a stolen or handed-off task's new owner
-  is notified through the IPC bus.
-- `taskfabric` -> `internal/system_runtime`: the Fabric is registered as a
-  component and started/stopped by the Orchestrator.
+- `taskfabric` -> `internal/kernel`: the kernel scheduler drains READY tasks
+  via `ReadyTasks` → `Schedule` → `Acquire` → `RunQuantum`; `ScoreBreakdown`
+  feeds the decision recorder.
+- `taskfabric` -> `internal/kernel` (System Runtime control plane): the Fabric
+  is adopted as a component (`Orchestrator.Adopt`) and stopped in reverse
+  topological order by the Orchestrator; wiring lives in
+  `internal/ares_bootstrap/system_runtime_wiring.go` and
+  `cmd/ares/kernel.go`.
 
 ## Extension points
 
@@ -308,8 +309,10 @@ only the prose differs.
 
 Production. The package is covered by `dag_test.go`, `event_store_test.go`,
 `fabric_test.go`, `preempt_test.go`, `quantum_test.go`, `schedule_test.go`,
-`steal_test.go`, and `benchmark_test.go`. It implements the cooperative
-task state machine with lease fencing, integrates with the ARES Kernel via
-`system_runtime`, and exposes no experimental markers.
+`scheduler_test.go`, `task_retry_test.go`, restore/lease tests, and
+`benchmark_test.go`. It implements the cooperative task state machine with
+lease fencing, integrates with the ARES Kernel via `internal/kernel`
+(quantum draining and System Runtime adoption), and exposes no experimental
+markers.
 
 {{< maturity "Production" >}}

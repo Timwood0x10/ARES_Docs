@@ -6,7 +6,7 @@ maturity: "Production"
 ---
 
 The `plugins` package hosts ARES plugins. The first and currently only plugin is
-`resurrection` (`internal/plugins/resurrection`), a supervisor that monitors
+`resurrection` (`internal/runtime`), a supervisor that monitors
 agents through a `HealthChecker` and automatically recreates them when they
 fail. It depends only on small interfaces, so any agent type that satisfies
 `base.Agent` can be supervised.

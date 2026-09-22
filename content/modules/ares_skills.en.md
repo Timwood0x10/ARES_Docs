@@ -5,7 +5,7 @@ weight: 106
 maturity: "Production"
 ---
 
-The `internal/ares_skills` package (package `ares_skills`) implements the
+The `internal/runtime/protocol/skills` package (package `ares_skills`) implements the
 **ARES Capability Fabric** (0.3.0): a small abstraction that treats a Skill
 as a **Capability Package** (`SKILL.md` + references + tool declarations)
 rather than a Tool. The implementation layer is deliberately limited to
@@ -58,7 +58,7 @@ flowchart TD
     RES --> MCP["MCPConnector.ConnectServer<br/>lazy MCP (design principle 3)"]
     CAT --> SEED["SeedRegistry<br/>knowledge/skills.Registry sync"]
     TOOLS["skill_search / skill_load / skill_activate<br/>skill_list / skill_experience"] --> CAT
-    OUT["SkillOutcomeRecorder<br/>subscribe EventSubTaskResult → Record"] --> EXP
+    OUT["SkillOutcomeWriter<br/>subscribe EventSubTaskResult → Record"] --> EXP
 ```
 
 ## Progressive disclosure
@@ -211,14 +211,14 @@ var (
 
 ## Module collaboration
 
-- `ares_skills` -> `internal/ares_mcp` (via `MCPConnector`): lazy MCP server
+- `ares_skills` -> `internal/runtime/protocol/mcp` (via `MCPConnector`): lazy MCP server
   connection at skill activation (design principle 3).
 - `ares_skills` -> `internal/knowledge/skills`: `SeedRegistry` keeps the
   memory manager's resident skill block in sync with the catalog index.
-- `ares_skills` -> `internal/ares_events` (via `SkillOutcomeRecorder`):
+- `ares_skills` -> `internal/ares_events` (via `SkillOutcomeWriter`):
   subscribes to `EventSubTaskResult` and records experience priors
   (`Record(skill, taskPattern, successRate)`).
-- `ares_skills` -> `internal/taskfabric` (via `ConfidenceSource` adapter):
+- `ares_skills` -> `internal/fabric/task` (via `ConfidenceSource` adapter):
   the Experience `BestMatch` `SuccessRate` feeds the taskfabric scheduler's
   `confidence` term.
 - `ares_skills` -> `internal/tools` (via `ToolResolver`): resolves builtin

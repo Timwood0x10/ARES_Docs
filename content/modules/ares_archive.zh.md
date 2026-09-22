@@ -5,7 +5,7 @@ weight: 112
 maturity: "Production"
 ---
 
-`internal/ares_archive` 包（package `ares_archive`）实现了闭环 Agent 的
+`internal/runtime/archive` 包（package `archive`）实现了闭环 Agent 的
 **归档式轮次摘要（round summarization）**。每轮对话作为一个独立的
 `RoundRecord` 持久化在 `.context/rounds/round_N.json` 下。记录从不合并
 （类似 git-log-per-commit，而非 git-squash），因此后续轮次可以引用
@@ -167,7 +167,7 @@ var (
 - `ares_archive` -> `internal/ares_events`：消费 `EventToolCallCompleted`、`EventLLMCall` 和 `EventMessageAdded` 的 payload 进行提取；提供 `ArchiveSink` 桥接，使 `CompactableEventStore` 在压缩前刷新每轮记录。`ArchiveSink` 定义在 ares_events 中以避免循环导入。
 - `ares_archive` -> `internal/ares_config`：`NewCompactableStoreWithArchive` 读取 `ArchiveConfig`（`enabled` / `dir` / `max_rounds`；默认 `.context/rounds`、200、默认开启）。
 - `ares_archive` -> `cmd/ares`：`serve.go` 通过 `NewCompactableStoreWithArchive` 构建共享的归档存储；`recall.go` 基于 `ArchiveReader` 暴露 `recall query <text>` / `recall round <N>` CLI。
-- `ares_archive` -> `internal/api_impl`：`NewEventStoreWithArchive` 将共享存储适配为 api_impl 的 `*EventStore` 形态（`RawStore()` 暴露底层 `*MemoryEventStore`，例如供 `dashboard.SetEventStore` 使用）。
+- `ares_archive` -> `internal/ares_events`：`NewEventStoreWithArchive` 将共享存储适配为事件存储形态（`RawStore()` 暴露底层存储；`cmd/ares` 与 `internal/dashboard` 已删除，面板改为 `internal/introspect`）。
 
 ## 扩展点
 

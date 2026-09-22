@@ -4,8 +4,9 @@ description: "Per-package reference for every ARES module, scanned from real sou
 weight: 3
 ---
 
-Each module page below is generated from a real source-code scan of the
-corresponding Go package. Every page includes a responsibility summary, a
+Each module page below is based on a scan of the corresponding Go package
+and periodically audited against the source tree (source is authoritative
+when a page lags). Every page includes a responsibility summary, a
 Mermaid architecture diagram, the exported interfaces and key methods, module
 collaboration relationships, concrete extension points, and a maturity
 annotation (Production / Beta / Experimental).

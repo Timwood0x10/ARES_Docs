@@ -1,7 +1,7 @@
 ---
 title: "aresrecovery"
 description: "Kernel Recovery P5：确保持久化任务在 Agent 崩溃后存活——租约过期重排、检查点恢复、Agent 重启，带重启预算/退避和进化感知生成门控。"
-weight: 108
+weight: 114
 maturity: "Production"
 ---
 
@@ -86,7 +86,7 @@ func New(tasks *taskfabric.Fabric, agents *agentfabric.Fabric, policy RestartPol
 func (r *Recovery) WithClock(now func() time.Time) *Recovery
 func (r *Recovery) WithSpawner(s *EvolutionAwareSpawner) *Recovery
 
-func (r *Recovery) RequeueExpiredLeases() int
+func (r *Recovery) RequeueExpiredLeases() []string
 func (r *Recovery) RecoverTaskCheckpoint(ctx context.Context, taskID, replacementID string) (string, uint64, error)
 func (r *Recovery) RestartAgent(ctx context.Context, deadAgentID string, cognitive agentfabric.CognitiveState, capabilities []string) (*agentfabric.Agent, error)
 func (r *Recovery) RestartCount(agentID string) int
@@ -135,7 +135,7 @@ var ErrSpawnLimitReached = errors.New("aresrecovery: evolution spawn limit reach
 | `New` | 将 Recovery 子系统连接到 Task 和 Agent Fabric，并指定 `RestartPolicy`；零值回退到 `DefaultRestartPolicy`。 |
 | `WithClock` | 注入可控时钟，用于确定性测试。 |
 | `WithSpawner` | 注入进化感知生成门控，使进化策略塑造重启和恢复生成（v0.4.0 M2-1）。 |
-| `RequeueExpiredLeases` | 扫描 Task Fabric 中已过期的租约，返回重排至 `READY` 的任务数（故障路径 1）。 |
+| `RequeueExpiredLeases` | 扫描 Task Fabric 中已过期的租约，返回重排队的任务 ID（故障路径 1）。 |
 | `RecoverTaskCheckpoint` | 用新 Agent 恢复任务的保存检查点 — 生成替换 Agent，获取任务，并将检查点安装为认知状态。返回替换 Agent ID 和新租约纪元（ fencing token）。 |
 | `RestartAgent` | 用新 Agent 替换崩溃的 Agent，新 Agent 承接死亡 Agent 的认知检查点；检查重启预算，生成替换，调用 `Recover`。预算耗尽时返回 `ErrRecoveryExhausted`。 |
 | `RestartCount` | 返回 Agent 已被重启的次数。 |
@@ -145,10 +145,10 @@ var ErrSpawnLimitReached = errors.New("aresrecovery: evolution spawn limit reach
 
 ## 模块协作
 
-- `aresrecovery` -> `internal/taskfabric`（通过 `tasks *taskfabric.Fabric`）：通过 `CheckExpiredLeases` 扫描过期租约，为替换 Agent 获取任务，读取保存的检查点。
-- `aresrecovery` -> `internal/agentfabric`（通过 `agents *agentfabric.Fabric`）：生成替换 Agent，通过 `SetCognitiveState` 和 `Recover` 安装认知状态。
-- `aresrecovery` -> `internal/ares_evolution`（通过 `SpawnPolicySource`，该接口在 aresrecovery 中定义、由进化系统实现 — aresrecovery 从不导入进化包）：进化策略（`SpawnPolicy`）塑造重启和恢复生成；`SpawnForRecovery` 仅绕过人口配额。
-- `aresrecovery` -> `internal/system_runtime`：Recovery 子系统注册为组件，由 Orchestrator 启动/停止。
+- `aresrecovery` -> `internal/fabric/task`（经 `tasks *taskfabric.Fabric`；导入路径 `internal/fabric/task`）：通过 `CheckExpiredLeases` 扫描过期租约，为替换 Agent 获取任务，读取保存的检查点。`RequeueExpiredLeases` 返回重排队的任务 ID（`[]string`）。
+- `aresrecovery` -> `internal/fabric/agent`（经 `agents *agentfabric.Fabric`；导入路径 `internal/fabric/agent`）：生成替换 Agent，通过 `SetCognitiveState` 和 `Recover` 安装认知状态。
+- `aresrecovery` -> `internal/ares_evolution`（经 `SpawnPolicySource`，该接口在 aresrecovery 中定义、由进化系统实现 — aresrecovery 从不导入进化包）：进化策略（`SpawnPolicy`）塑造重启和恢复生成；`SpawnForRecovery` 仅绕过人口配额。
+- `aresrecovery` -> `internal/kernel`（System Runtime 控制面）：Recovery 子系统经 `Orchestrator.Adopt` 注册为组件，由 Orchestrator 停机；接线在 `cmd/ares/kernel.go` 与 `internal/ares_bootstrap/system_runtime_wiring.go`。
 
 ## 扩展点
 
@@ -165,5 +165,14 @@ var ErrSpawnLimitReached = errors.New("aresrecovery: evolution spawn limit reach
 ## 成熟度
 
 Production。该包包含单元测试，实现了带有重启预算执行、进化感知生成门控和完整 `RecoverFromAgentDeath` 链的 Kernel Recovery 子系统（P5）。它与 Task Fabric、Agent Fabric 和 Evolution 子系统集成，且无实验性标记。
+
+
+## 策略分数写回（零-LLM 反馈闭环）
+
+`ScoredFeedbackAdapter.Apply` 用 `DeterministicScorer` 从执行归因聚合分数，
+经 `StrategyScoreAdapter.WriteActiveScore` → StrategyStore 写回活跃策略。写回
+需要存在活跃策略——bootstrap 会向空 store 播种 `bootstrap-root`；缺播种时每次
+写回报 "no active strategy"，GA 无证据可学。该 adapter 不改变哪个策略处于
+活跃状态，只原地更新 Score 字段。
 
 {{< maturity "Production" >}}

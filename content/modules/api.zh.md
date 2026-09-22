@@ -1,9 +1,14 @@
 ---
 title: "api"
 description: "ARES 顶层 HTTP 与库入口，将所有模块装配为单一运行时。"
-weight: 110
+weight: 115
 maturity: "Production"
 ---
+
+> **状态（2026-09 对照源码树核实）：** `api/` 是平面包（包名 `ares`），通过
+> 类型别名再导出 `sdk` 的公开 API；唯一子包是 `api/embedding`。`api/{core,service,
+> bootstrap,router,handler,client,workflow,tools,mcp,tasks,discovery,v1}` 等路径
+> 在源码中不存在——以源码为准。下文描述的是完整的再导出表面。
 
 `api` 包是 ARES 的顶层容器。它持有引导工厂（`bootstrap.ARES`）、按领域划
 分的 `Register*` HTTP 路由、SSE 流式处理器，以及三个库式客户端
@@ -220,9 +225,36 @@ func (s *Service) GetWorkflow(ctx context.Context, id string) (*core.WorkflowDef
 
 ## 成熟度
 
-Production。`api` 包是 ARES 唯一的公开表面，由 `bootstrap_test.go`、
+Production。`api` 包是 ARES 的进程内公开表面；非 Go 调用方的外部 HTTP
+任务面是 `ares serve` 的 cmd/ares 路由注册表（见上文外部任务接口一节）。
+`api` 包由 `bootstrap_test.go`、
 `router_test.go`、`client_test.go`、`handler_test.go` 以及
 `service/*_test.go` 覆盖，已集成进 SDK 入口（`sdk.New`），无任何实验性
 标记。
+
+
+## 外部任务接口（ares serve）
+
+非 Go 调用方的外部入口是 `ares serve` 的 HTTP 任务面（由 `cmd/ares` 分发，
+不属于本 `api` 包）：
+
+- `POST /api/tasks` — 最小请求体 `{"query": "..."}`；query 折叠进 payload
+  的 `input` 与 `task_desc` 键（调用方显式值优先）。`capability` 缺省取
+  `server.default_capability`——该值**仅审计**：Submitter 将每次提交规范化到
+  唯一 L2 能力 `ares/plan`，yaml 值不会路由到其他 agent 群体。
+- `POST /api/tasks?wait=<dur>` — 可选同步等待。默认 `tasks.wait_timeout`
+  （60s），硬顶 300s（超出 → 400）。到达终态 → 200 返回任务视图；等待超时
+  → 202 携带 `task_id` 与当前 `state`。提交不因等待过期而失败。
+- `GET /api/tasks/{task_id}` — TaskView 精简字段（`task_id`、`capability`、
+  `state`、`owner`、`quantum`、`has_checkpoint`、`dependencies`、`origin`、
+  时间戳）加 `result` 与 `error`。`result` 为会话答案（完成态 answer 节点的
+  `items[0].Content`），回退到量子 step checkpoint；`error` 携带失败原因：
+  持久化的量子错误（checkpoint envelope 的 `last_error`）→ 级联/会话 answer
+  溯源 → "session stalled before an answer landed"。
+- **鉴权**：write 门 deny-by-default——无凭证 POST 一律 401（含 loopback）。
+  read 门（`authRead`）在配置了任一凭证层后必须携带凭证；仅当无任何凭证层时
+  loopback 读开放。凭证优先级：`security.api_key` 优先于 `llm.api_key`；两者
+  皆空 → write 401。`ares init` 会向项目 ares.yaml 生成随机 `security.api_key`
+  （文件模式 0600）。
 
 {{< maturity "Production" >}}

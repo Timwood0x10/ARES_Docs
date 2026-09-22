@@ -5,7 +5,7 @@ weight: 230
 maturity: "Beta"
 ---
 
-The `ares_arena` package (`internal/ares_arena`, import path `arena`) is the
+The `ares_arena` package (`internal/runtime/arena`, import path `arena`) is the
 chaos engineering layer that proves ARES is a self-healing runtime. It
 deliberately injects faults into running agents and the DAG, records results,
 and feeds failures to the evolution coordinator and flight recorder. Recovery

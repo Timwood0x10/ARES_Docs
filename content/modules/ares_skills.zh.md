@@ -5,7 +5,7 @@ weight: 106
 maturity: "Production"
 ---
 
-`internal/ares_skills` 包（包名 `ares_skills`）实现 **ARES Capability
+`internal/runtime/protocol/skills` 包（包名 `ares_skills`）实现 **ARES Capability
 Fabric**（0.3.0）：一个把 Skill 当作**能力包**（`SKILL.md` + references +
 工具声明）而非 Tool 的小抽象。实现层刻意限制在 `SkillCatalog` /
 `SkillLoader` / `ToolResolver`——没有 `SkillManager` / `Orchestrator` /
@@ -55,7 +55,7 @@ flowchart TD
     RES --> MCP["MCPConnector.ConnectServer<br/>懒加载 MCP (design principle 3)"]
     CAT --> SEED["SeedRegistry<br/>同步 knowledge/skills.Registry"]
     TOOLS["skill_search / skill_load / skill_activate<br/>skill_list / skill_experience"] --> CAT
-    OUT["SkillOutcomeRecorder<br/>订阅 EventSubTaskResult → Record"] --> EXP
+    OUT["SkillOutcomeWriter<br/>订阅 EventSubTaskResult → Record"] --> EXP
 ```
 
 ## 渐进式披露
@@ -208,14 +208,14 @@ var (
 
 ## 模块协作
 
-- `ares_skills` -> `internal/ares_mcp`（经 `MCPConnector`）：skill 激活时
+- `ares_skills` -> `internal/runtime/protocol/mcp`（经 `MCPConnector`）：skill 激活时
   懒连接 MCP server（设计原则 3）。
 - `ares_skills` -> `internal/knowledge/skills`：`SeedRegistry` 使记忆
   管理器常驻 skill 块与 catalog 索引同步。
-- `ares_skills` -> `internal/ares_events`（经 `SkillOutcomeRecorder`）：
+- `ares_skills` -> `internal/ares_events`（经 `SkillOutcomeWriter`）：
   订阅 `EventSubTaskResult` 并记录经验先验
   （`Record(skill, taskPattern, successRate)`）。
-- `ares_skills` -> `internal/taskfabric`（经 `ConfidenceSource` 适配器）：
+- `ares_skills` -> `internal/fabric/task`（经 `ConfidenceSource` 适配器）：
   Experience 的 `BestMatch` `SuccessRate` 喂给 taskfabric 调度器的
   `confidence` 项。
 - `ares_skills` -> `internal/tools`（经 `ToolResolver`）：解析 skill

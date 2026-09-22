@@ -5,9 +5,14 @@ weight: 109
 maturity: "Production"
 ---
 
-`internal/agentfabric` 包（包名 `agentfabric`）是 ARES Kernel 的 **Agent
+> **状态（2026-09 对照源码树核实）：** 包位于 `internal/fabric/agent`
+> （包名仍为 `agentfabric`；自 `internal/agentfabric` 迁出）。
+> `SetRunning` / `SetIdle` 与 `StateRunning` 状态已作为死代码删除——生命周期
+> 状态现为 `IDLE` / `SUSPENDED` / `RETIRED`。以源码为准。
+
+`internal/fabric/agent` 包（包名 `agentfabric`）是 ARES Kernel 的 **Agent
 Lifecycle** 支柱。它持有智能体注册表、Process Tree（spawn 溯源）、生命周期
-状态机（`IDLE → RUNNING → SUSPENDED → {IDLE | RETIRED}`）、三层上下文隔离
+状态机（`IDLE → SUSPENDED → {IDLE | RETIRED}`）、三层上下文隔离
 （Task Shared / Agent Private / IPC）以及 P5 资源准入门。
 
 核心不变量是 **A ≡ B ≡ C**（智能体是同级认知进程；父子关系仅为溯源，不构成
@@ -22,7 +27,8 @@ IPC（那是 `agentipc` 的事）。
 - 实现生命周期状态机：`Spawn`（创建 `StateIdle` 智能体）、`Suspend` /
   `Resume`（Lifecycle 暂停，非 Task 暂停）、`Retire`（优雅永久退役）、
   `Kill`（强制崩溃路径）、`Recover`（将认知 checkpoint 恢复进 IDLE 或
-  SUSPENDED 智能体）。
+  SUSPENDED 智能体）。不存在 `StateRunning` / `SetRunning` / `SetIdle`
+  ——这些转换已作为死代码删除。
 - 强制 P5 资源准入：`WithResourceBudget` 设置命名配额；`Spawn` 在请求资源
   超出剩余配额时以 `ErrResourceQuotaExceeded` 拒绝；`UpdateResourceBudget`
   动态替换配额（v0.4.0 M2-2：进化驱动的资源分配）；claim 在 `Kill` /
@@ -49,13 +55,11 @@ flowchart TD
     ADM -- yes --> REG["agents[id] = a<br/>allocateLocked(claim)"]
     REG --> PT["children[parent] = append(..., id)<br/>Process Tree (provenance only)"]
     PT --> EVT["record EventAgentSpawned"]
-    SUS["Fabric.Suspend"] --> STS["StateIdle/Running → StateSuspended"]
+    SUS["Fabric.Suspend"] --> STS["StateIdle → StateSuspended"]
     RES["Fabric.Resume"] --> STR["StateSuspended → StateIdle"]
     RET["Fabric.Retire"] --> REL["releaseLocked(claim)<br/>State → StateRetired"]
     KIL["Fabric.Kill"] --> DEL["delete(agents, id)<br/>releaseLocked(claim)<br/>children survive (Parent 死 ≠ Child 死)"]
     REC["Fabric.Recover<br/>cognitive CognitiveState"] --> RCS["a.cognitive = cognitive<br/>StateSuspended → StateIdle"]
-    SCH["Scheduler"] --> SR["Fabric.SetRunning"]
-    SCH --> SI["Fabric.SetIdle"]
     CTX["Fabric.SetTaskContext"] --> TC["a.taskContext = cloneMap"]
     PRV["Fabric.SetPrivate"] --> PC["a.privateContext[key] = val<br/>(never bleeds into Task Shared)"]
     CV["Fabric.ContextView"] --> ISO["ContextView{TaskShared, Private}<br/>verify isolation"]
@@ -70,15 +74,11 @@ flowchart TD
 ```mermaid
 stateDiagram-v2
     [*] --> Idle: Spawn
-    Idle --> Running: SetRunning (Scheduler binds Task)
-    Running --> Idle: SetIdle (Task yields/completes)
     Idle --> Suspended: Suspend
-    Running --> Suspended: Suspend
     Suspended --> Idle: Resume
     Idle --> Retired: Retire
     Suspended --> Retired: Retire
     Idle --> [*]: Kill
-    Running --> [*]: Kill
     Suspended --> [*]: Kill
     note right of Retired
         Retired is terminal;
@@ -126,11 +126,6 @@ func (f *Fabric) Retire(ctx context.Context, agentID string) error
 func (f *Fabric) Kill(ctx context.Context, agentID string) error
 func (f *Fabric) Recover(ctx context.Context, agentID string, cognitive CognitiveState) error
 
-// --- Internal scheduler hooks (not public lifecycle primitives) ---
-
-func (f *Fabric) SetRunning(agentID string) error
-func (f *Fabric) SetIdle(agentID string) error
-
 // --- Three-layer context (design §13: do not share one brain) ---
 
 func (f *Fabric) SetTaskContext(agentID string, taskCtx map[string]any) error
@@ -149,10 +144,9 @@ func (f *Fabric) CheckpointCognitive(agentID string) (CognitiveState, error)
 
 type AgentState string
 const (
-    StateIdle     AgentState = "IDLE"
-    StateRunning  AgentState = "RUNNING"
+    StateIdle      AgentState = "IDLE"
     StateSuspended AgentState = "SUSPENDED"
-    StateRetired  AgentState = "RETIRED"
+    StateRetired   AgentState = "RETIRED"
 )
 
 // Agent is a disposable, peer-equivalent cognitive process (design §3 + §13).
@@ -179,6 +173,7 @@ type Agent struct {
 // It is independently checkpointable — the Runtime does NOT depend on hidden
 // chain-of-thought, only on this durable state.
 type CognitiveState struct {
+    SchemaVersion int  // set by SetCognitiveState / Recover; 0 = legacy
     Context       any  // active reasoning context (task goal + constraints)
     Observation   any  // latest observation from environment/tools
     WorkingMemory any  // scratchpad for intermediate reasoning
@@ -192,12 +187,15 @@ type CognitiveState struct {
 // / policy, then creates the Agent + (optionally) a Task + the parent-child
 // provenance link.
 type SpawnSpec struct {
-    Identity     string           // requested agent id; "" means Fabric assigns one
-    Capabilities []string         // declared capabilities of the new agent
-    ParentID     string           // spawning agent's id ("" for a root agent)
-    TaskContext  map[string]any   // shared task state passed from parent (snapshot/projection)
-    Resources    map[string]any   // resource hints (quota/capability/policy validation surface)
-    Priority     float64          // scheduling priority (>= 0; 0 = normal; OS-thread analog)
+    Identity         string           // requested agent id; "" means Fabric assigns one
+    Capabilities     []string         // declared capabilities of the new agent
+    ParentID         string           // spawning agent's id ("" for a root agent)
+    TaskContext      map[string]any   // shared task state passed from parent (snapshot/projection)
+    Resources        map[string]any   // resource hints (quota/capability/policy validation surface)
+    Governance       Governance       // cognitive-execution budget (token/tool/deadline); zero = unlimited
+    Priority         float64          // scheduling priority (>= 0; 0 = normal; OS-thread analog)
+    CognitionFactory CognitionFactory // execution body; nil = managed-only, no quantum execution
+    ExperiencePrior  any              // distilled prior written into CognitiveState.Context at spawn
 }
 
 // --- Context layer (design §13: three-layer context) ---
@@ -242,10 +240,9 @@ const (
 var (
     ErrAgentNotFound
     ErrAgentExists
-    ErrAgentNotIdle
     ErrAgentRetired
     ErrAgentNotSuspended
-    ErrAgentRunning
+    ErrAgentNotExecutable
     ErrInvalidSpawnSpec
     ErrResourceQuotaExceeded
 )
@@ -257,12 +254,11 @@ var (
 | --- | --- |
 | `Fabric` | Agent Lifecycle 支柱；持有智能体注册表、Process Tree、资源配额、事件 sink。 |
 | `NewFabric` | 构造空 `Fabric`；用 `WithEventSink` / `WithClock` / `WithResourceBudget` 链式注入。 |
-| `Spawn` | 创建 `StateIdle` 智能体的 Kernel syscall；校验 spec、检查 P5 配额、记录父子溯源。 |
+| `Spawn` | 创建 `StateIdle` 智能体的 Kernel syscall；校验 spec、检查 P5 配额、记录父子溯源。`SpawnSpec` 接受 `Governance`、`CognitionFactory` 与 `ExperiencePrior`。 |
 | `Suspend` / `Resume` | Lifecycle 暂停（非 Task 暂停）；内存状态保留；Resume 重启同一实例。 |
 | `Retire` | 优雅永久退役；智能体不得处于 `RUNNING`（需先 suspend）；资源 claim 释放；子智能体存活。 |
 | `Kill` | 强制崩溃路径；任意状态可用；注册表项被删除；子智能体存活（Parent 死 ≠ Child 死）；资源 claim 释放。 |
 | `Recover` | 将认知 checkpoint 恢复进 IDLE/SUSPENDED 智能体——新智能体恢复死亡智能体认知的路径（§13 不变量 #2）。 |
-| `SetRunning` / `SetIdle` | 调度器内部钩子（非公开生命周期原语）；Scheduler 绑定 Task 时标 RUNNING，Task yield/complete 时标 IDLE。 |
 | `SetTaskContext` / `TaskContext` | Task Shared State 层；经 copy 故智能体永不改写调用方 map。 |
 | `SetPrivate` / `Private` | Agent Private State 层（scratchpad）；绝不泄漏到 Task Shared 或其他智能体（§13 不变量 #5 + #6）。 |
 | `ContextView` | Task Shared + Private 层的只读快照；用于校验隔离：Private 不得出现在 TaskShared。 |
@@ -273,17 +269,18 @@ var (
 
 ## 模块协作
 
-- `agentfabric` -> `internal/taskfabric`：调度器在 `agentfabric.Agent`
+- `agentfabric` -> `internal/fabric/task`：调度器在 `agentfabric.Agent`
   实例间挑选；`Agent.Capabilities` / `Load` / `Confidence` / `Priority`
   填入 `taskfabric.Candidate`。
 - `agentfabric` -> `internal/agentipc`：IPC 支柱按 `Agent.Identity` 寻址；
   `Children` 为 IPC 策略提供溯源图。
-- `agentfabric` -> `internal/ares_skills`（经 `Confidence` 字段）：
-  Experience 的 `BestMatch` `SuccessRate` 是天然 confidence 先验。
+- `agentfabric` -> `internal/runtime/protocol/skills`（经 `Confidence`
+  字段）：Experience 的 `BestMatch` `SuccessRate` 是天然 confidence 先验。
 - `agentfabric` -> `internal/ares_events`（经 `EventSink`）：生命周期事件
   best-effort 持久化以支持跨重启重建；进程内注册表仍是权威源。
-- `agentfabric` -> `internal/system_runtime`：Fabric 作为组件被注册，由
-  Orchestrator 启停。
+- `agentfabric` -> `internal/kernel`（System Runtime 控制面）：Fabric 经
+  `Orchestrator.Adopt` 注册为组件，由 Orchestrator 停机；接线在
+  `cmd/ares/kernel.go` 与 `internal/ares_bootstrap/system_runtime_wiring.go`。
 
 ## 扩展方式
 
@@ -312,9 +309,10 @@ var (
 
 ## 成熟度
 
-Production。该包由 `agent.go` / `lifecycle.go` / `context.go` /
-`resource.go` 的测试覆盖，包括 `resource_test.go` 与 `fabric_test.go`。
-它实现了带 P5 资源准入的智能体生命周期状态机，通过 `system_runtime` 集成
-进 ARES Kernel，且不含任何实验性标记。
+Production。该包由 `fabric_test.go`、`resource_test.go`、
+`agent_medium_test.go`、`governance_test.go`、e2e spawn/IPC/synthesis 测试
+及相关生命周期/上下文测试覆盖。它实现了带 P5 资源准入的智能体生命周期状态
+机，经 `internal/kernel`（System Runtime 采纳）集成进 ARES Kernel，且不含
+任何实验性标记。
 
 {{< maturity "Production" >}}

@@ -5,7 +5,12 @@ weight: 40
 maturity: "Production"
 ---
 
-`core` 模块是 ARES 的共享契约层，分布在两处：`api/core`（包 `core`）持有面向公众的
+> **状态（2026-09 对照源码树核实）：** `api/core` 包不存在——`api/` 是平面包，
+> `core` DTO 通过 `internal/llmcore` + `sdk` 别名暴露。`internal/core/errors` 包
+> 不存在（仅 `internal/core/models`）；`AppError`、`ErrorCode`、`WorkflowRequest` 等
+> 类型在源码树中不存在。以源码为准。
+
+`core` 模块是 ARES 的共享契约层，分布在两处：`internal/llmcore`（通过 `sdk`/`api` 再导出为 `core`）持有面向公众的
 数据传输对象与 LLM、智能体、工作流的 service 接口；`internal/core` 持有内部领域模型
 （`internal/core/models`，包 `models`）以及结构化错误类型与再导出的哨兵错误
 （`internal/core/errors`，包 `errors`）。几乎所有其他包都导入这些类型，因此它们保持
@@ -49,7 +54,7 @@ flowchart TD
     SDK --> AGT
     AGENTS["internal/agents"] --> MDL
     AGENTS --> ERR
-    RT["internal/ares_runtime"] --> AGT
+    RT["internal/runtime"] --> AGT
     RT --> ERR
     LLM --->|"used by"| AGENTS
     WF --->|"used by"| RT
@@ -452,6 +457,8 @@ const (
     DefaultTaskTTL    = 1 * time.Hour
 )
 
+
+<!-- 注：internal/core/errors 包在源码中不存在（仅 internal/core/models）。以下为历史参考。 -->
 // ---- internal/core/errors (package errors) ----
 type ErrorCode struct {
     Code       string
@@ -505,9 +512,9 @@ func New(code *ErrorCode) *AppError
 | 类型 / 方法 | 用途 |
 | --- | --- |
 | `core.LLMConfig` | LLM 调用的 provider、model、采样与 prompt 长度参数。 |
-| `core.LLMMessage` / `ToolCall` / `FunctionCall` | 对话消息与工具调用表示。 |
+| `llmcore.LLMMessage` / `ToolCall` / `FunctionCall` | 对话消息与工具调用表示。 |
 | `core.Tool` / `FunctionDefinition` | 传给 LLM 的函数调用 schema。 |
-| `core.GenerateRequest` / `GenerateResponse` | LLM 生成请求/响应（流式、工具、覆盖项）。 |
+| `llmcore.GenerateRequest` / `GenerateResponse` | LLM 生成请求/响应（流式、工具、覆盖项）。 |
 | `core.TokenUsage` | prompt/completion/total token 统计。 |
 | `core.LLMService` | 生成、embedding 与配置内省接口。 |
 | `core.Agent` / `AgentConfig` / `AgentStatus` | 智能体实体与生命周期状态枚举。 |
@@ -528,7 +535,7 @@ func New(code *ErrorCode) *AppError
 ## 模块协作
 
 - `api/core` 被 `sdk`、`api/service/llm`、`internal/agents`
-  （`agents.Service`、`sub.ChatClient`/executor）、`internal/ares_runtime`
+  （`agents.Service`、`sub.ChatClient`/executor）、`internal/runtime`
   以及工作流引擎导入，用于 DTO 与 service 接口。
 - `internal/core/models` 被 `internal/agents/base`、`leader`、`sub`、
   `ares_runtime`（状态兜底）以及推荐/聚合组件导入。

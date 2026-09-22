@@ -9,7 +9,7 @@ maturity: "Beta"
 
 ## Responsibility
 
-The `retrievalservice` package (Go import path `internal/retrievalservice`,
+The `retrievalservice` package (Go import path `internal/knowledge/retriever`,
 package name `retrievalservice`) is the service layer for tenant-scoped
 knowledge base operations. It wraps a `core.RetrievalRepository` with
 validation, ID generation, timestamp management, and pagination, exposing a
@@ -175,7 +175,7 @@ in English in both pages.
 
 ## Maturity
 
-Beta. The package is functional and covered by `retrievalservice_test.go`
+Beta. The package is functional and covered by `retriever_test.go`
 (exercising the service and the in-memory repository across CRUD, search,
 pagination, and tenant-isolation paths). The public `Service` API is stable,
 but the package is classified Beta because the repository contract and

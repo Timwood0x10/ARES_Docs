@@ -1,6 +1,6 @@
 ---
 title: "ares_config"
-description: "ARES 服务器的 YAML 配置加载、默认值、环境变量覆盖与校验。"
+description: "ARES 服务器的 YAML 配置加载、默认值与校验——ares.yaml 是唯一配置入口。"
 weight: 170
 maturity: "Production"
 ---
@@ -10,7 +10,7 @@ maturity: "Production"
 ## 职责
 
 `ares_config` 拥有 ARES 的全部配置面。它读取 YAML 文件,应用分层默认值,
-合并环境变量覆盖,并在把完全填充的 `Config` 交给装配层之前执行逐节校验。
+在把完全填充的 `Config` 交给装配层之前执行逐节校验。ares.yaml 是唯一配置入口——不存在环境变量或 CLI flag 配置面。
 当配置了允许的配置目录时,它还防御路径穿越攻击。
 
 该包定义了服务器所理解的全部配置结构体:server、LLM(含 fallback 与
@@ -36,7 +36,7 @@ flowchart TD
 ```
 
 `Load` 是唯一入口:它先保护路径,解析 YAML,调用 `setDefaults` 用合理默认值
-填充零值,再调用 `Validate`。`LoadFromEnv` 单独应用,让环境变量覆盖 YAML 得到的
+填充零值,再调用 `Validate`。（历史：`LoadFromEnv` 曾提供环境变量覆盖，该表面已删除；
 值。默认值是条件式的:RAG、distillation 与 knowledge retrieval 参数仅在其各自的
 enable 标志为 true 时才填充,因此未启用时这些子系统保持惰性。
 
@@ -46,8 +46,7 @@ enable 标志为 true 时才填充,因此未启用时这些子系统保持惰性
 // Load reads configuration from a YAML file, applies defaults, and validates it.
 func Load(path string) (*Config, error)
 
-// LoadFromEnv loads configuration from environment variables (overrides YAML).
-func LoadFromEnv(cfg *Config) error
+// (已移除) 环境变量覆盖表面（LoadFromEnv / ARES_*）已删除——ares.yaml 是唯一配置入口。
 
 // SetAllowedConfigDir sets the allowed directory for config files (security).
 func SetAllowedConfigDir(dir string)
@@ -83,7 +82,7 @@ const DefaultTaskDistillationPrompt = "Please concisely summarize..."
 | `EmbeddingConfig` | 用于经验蒸馏的 embedding 客户端。 |
 | `DiscoveryConfig` | 可选服务发现引擎。 |
 | `Load(path)` | 读取、填充默认值并校验 YAML 配置。 |
-| `LoadFromEnv(cfg)` | 将环境变量覆盖到配置上。 |
+| （已移除） | 环境变量覆盖表面（`LoadFromEnv`、`ARES_*`）已删除，仅经 ares.yaml 配置。 |
 | `setDefaults()` | 内部:条件式默认值填充。 |
 | `Validate()` | 内部:逐节校验。 |
 
@@ -100,7 +99,7 @@ const DefaultTaskDistillationPrompt = "Please concisely summarize..."
 1. 新增顶层节:定义结构体,在 `Config` 中添加带 `yaml` tag 的字段,在
    `setDefaults` 中填充默认值,并新增一个从 `Validate` 调用的
    `validate<Section>()` 方法。
-2. 新增环境变量覆盖:在 `LoadFromEnv` 中扩展一个 `os.Getenv` 分支,映射到
+2. （历史）环境变量覆盖曾位于 `LoadFromEnv`；新字段仅从 ares.yaml 消费（G2 契约门要求生产消费者）：
    目标字段。
 3. 通过启动时调用 `SetAllowedConfigDir` 限制配置文件位置;`Load` 会拒绝任何
    解析到该目录之外的路径。
@@ -118,5 +117,25 @@ const DefaultTaskDistillationPrompt = "Please concisely summarize..."
 
 `ares_config` 由 `config_test.go`、`config_closed_loop_test.go` 与
 `archive_config_test.go` 覆盖。它已集成进 SDK 装配路径,无实验性标记。
+
+
+## 外部接口相关配置键（ares.yaml）
+
+所有运行时配置只经 ares.yaml——不存在 CLI flag / 环境变量配置面。
+
+- `server.default_capability`（默认 `ares/plan`）— `POST /api/tasks` 缺省
+  capability 时使用。**仅审计**：执行侧在 Submitter 处规范化到 `ares/plan`，
+  该值不会把任务路由到其他 agent 群体。
+- `tasks.wait_timeout`（默认 `60s`）— `POST /api/tasks?wait=` 的默认同步等待，
+  设置时同时作为 `ares run` 的 ctx 超时。两个面硬顶同为 300s（handler 收敛；
+  `ares run` 未设置时默认 120s）。负值/不可解析值被校验拒绝。
+- `security.api_key` — 专用 HTTP 控制面凭证，优先于 `llm.api_key`。两者皆空
+  → write 门 401（含 loopback）。`ares init` 向项目模板生成随机值（ares.yaml
+  以 0600 写盘）。在 `Config.Redacted()` 中脱敏。
+- `tools.file_sandbox_dir` — file_tools 沙箱允许 agent 读写的工作区根目录。
+  空值（默认）回退到进程私有临时目录——设置之前 agent 碰不到服务仓库/工作区。
+- `evolution.llm_scoring.{enabled,seed,max_calls_per_generation}` 与
+  `evolution.shadow.{min_samples,min_win_rate,replay_window_span,replay_query_limit}`
+  控制 GA 证据路径（判决语义见 ares_evolution 模块页）。
 
 {{< maturity "Production" >}}

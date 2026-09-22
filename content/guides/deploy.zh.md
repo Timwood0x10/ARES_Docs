@@ -5,7 +5,7 @@ weight: 1
 ---
 
 本站使用 [Hugo](https://gohugo.io) 构建，通过 GitHub Actions 部署到 GitHub Pages。
-无需主题子模块 —— 所有布局与样式直接放在 `Ares_docs/` 下。
+无需主题子模块 —— 所有布局与样式直接放在仓库根目录下。
 
 ## 前置条件
 
@@ -14,7 +14,7 @@ weight: 1
 ## 本地预览
 
 ```bash
-cd Ares_docs
+cd ARES_Docs
 hugo server --port 9090
 ```
 
@@ -23,7 +23,7 @@ hugo server --port 9090
 ## 生产构建
 
 ```bash
-cd Ares_docs
+cd ARES_Docs
 hugo --minify --baseURL "https://timwood0x10.github.io/ARES/"
 ```
 
@@ -31,9 +31,10 @@ hugo --minify --baseURL "https://timwood0x10.github.io/ARES/"
 
 ## GitHub Pages CI
 
-`.github/workflows/hugo.yml` 中的工作流在推送到 `main`、`master` 或 `dev`
-分支时自动构建并部署。它使用 `peaceiris/actions-hugo@v3` 安装 Hugo，运行
-`hugo --minify`，并通过 `actions/deploy-pages@v4` 部署 `public/` 产物。
+`.github/workflows/hugo.yml` 在推送到 `main`、`master` 或 `dev` 时构建并部署：
+从 GitHub Releases 安装 Hugo extended，`actions/configure-pages@v5` 配置
+Pages，运行 `hugo --minify`，再经 `actions/upload-pages-artifact@v3` 与
+`actions/deploy-pages@v4` 发布 `public/` 产物。
 
 确保仓库的 Pages 来源设置为 **GitHub Actions**（Settings → Pages）。
 

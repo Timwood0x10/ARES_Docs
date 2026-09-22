@@ -9,9 +9,9 @@ maturity: "Beta"
 
 ## 职责
 
-`ares_evolution` 是 ARES 的自主进化层。它跨越两个包:`internal/ares_evolution`
+`ares_evolution` 是 ARES 的自主进化层。它跨越两个包:`internal/runtime/ares_evolution`
 (旧版 GA dream-cycle 栈、调度器、策略存储、guardrails、shadow evaluator、回滚策略
-以及高层 `service.Service`)与 `internal/evolution`(新版 genome/diff/patch/
+以及高层 `service.Service`)与 `internal/runtime/evolution`(新版 genome/diff/patch/
 coordinator 栈及 LLM adapter)。二者共同变异 agent 决策策略,通过 arena 回归评估
 候选,记录谱系,并将被接受的变异以通用 `RuntimePatch` 单元提升到实时运行时。
 
@@ -69,7 +69,7 @@ type Strategy struct {
     CreatedAt     time.Time      `json:"created_at"`
 }
 
-// Core evolution interfaces (internal/ares_evolution/interfaces.go).
+// Core evolution interfaces (internal/runtime/ares_evolution/interfaces.go).
 type MutatorInterface interface {
     Mutate(ctx context.Context, parent Strategy, n int) ([]Strategy, error)
 }
@@ -98,7 +98,7 @@ func DefaultDreamCycleConfig() DreamCycleConfig
 // Scheduler.
 func NewEvolutionScheduler(cb CallbackRegistrar, adapter AdapterRunner, opts ...SchedulerOption) *EvolutionScheduler
 
-// High-level service API (internal/ares_evolution/service).
+// High-level service API (internal/runtime/ares_evolution/service).
 func NewService(cfg *SystemConfig) (*Service, error)
 func DefaultConfig() *SystemConfig
 func (s *Service) Evolve(ctx context.Context, generations int) (*EvolutionResult, error)
@@ -109,7 +109,7 @@ func (s *Service) RunIdleEvolution(ctx context.Context, generations int) error
 func (s *Service) Shutdown()
 func LoadBestStrategy(path string) (*Strategy, error)
 
-// Coordinator + 7 patch sources (internal/evolution/coordinator).
+// Coordinator + 7 patch sources (internal/runtime/evolution/coordinator).
 type PatchSource string
 const (
     SourceGA    PatchSource = "genome" // Genetic Algorithm
@@ -162,10 +162,10 @@ func DefaultPolicy() PolicyGenome
 
 ## 模块协作
 
-- `internal/ares_evolution` 消费 `ares_callbacks`、`ares_events`、`ares_flight`、
+- `internal/runtime/ares_evolution` 消费 `ares_callbacks`、`ares_events`、`ares_flight`、
   `ares_eval`、`ares_experience` 以及 `genome`/`mutation`/`scoring`/`promotion`
   子包。
-- `internal/evolution/coordinator` 仅依赖 `internal/evolution/patch`,使决策引擎与
+- `internal/runtime/evolution/coordinator` 仅依赖 `internal/runtime/evolution/patch`,使决策引擎与
   补丁的生成方式解耦。
 - `ares_bootstrap.ProvideNewEvolution` 装配 `genome.Registry` -> `diff.Registry` ->
   `patch.Registry` -> `EvolutionCoordinator`,并与 agent 共享 `KnowledgeRuntime`
@@ -205,5 +205,37 @@ func DefaultPolicy() PolicyGenome
 `rollback_policy_test.go`、`feedback_recorder_test.go`、`service_test.go` 与
 `coordinator_test.go` 覆盖。GA 服务 API 与 coordinator 功能完备且经过测试,但跨包
 装配与 `SystemConfig` 表面仍在演进,故该模块标记为 Beta。
+
+
+## 证据闭环与闸门语义（依据代码核实，2026-09）
+
+- **活跃策略播种**：仅当 StrategyStore 无活跃策略时，bootstrap 才将基础策略
+  `bootstrap-root`（Score 0.5）写入 store；已有活跃策略（如 PG 重启恢复）绝不
+  覆盖。`ActiveStrategyManager.Current()` 在 promote 缓存为空时回退到持久化
+  store——store 是事实源。
+- **分数写回**：`aresrecovery.DeterministicScorer` →
+  `strategyScoreAdapter.WriteActiveScore` → StrategyStore。写回需要存在活跃
+  策略（bootstrap 播种）；否则每次写回报 "no active strategy"，GA 无证据可学。
+- **EvolutionScheduler TriggerOnIdle（默认触发）**：分数窗 `scoreWindowSize=50`；
+  周期阈值 `periodicEvolutionScoreThreshold=40`（必须 ≤ 窗上限，超过则不可达）；
+  可靠性下限 `minScoreCountForReliability=20`；全失败窗口（avg≤0 且 count≥20）
+  触发探索；退化幅度 ≥0.15 同样触发。
+- **Guardrails**：`PreEvolveCheck` 的未评估多数检查在 generation 0 豁免（冷启动
+  种群天然未评估，第一轮 Run 即评估）；≥1 代保留 >50% 未评估拦截。
+- **Tick 进化运行**在 errgroup goroutine 中带逐轮 recover：panic 记录日志、
+  下一 tick 重试（panic 时 `lastRun` 不前进）。
+- **WorkflowGenome**：serve 接线为 `AgentPool` 播种 `["ares/plan","ares/answer"]`；
+  空池时 `mutateInsertNode`/`mutateReplaceNode` 为 no-op 而非 panic。
+- **Live agent DAG**：`agents.peers` 拓扑注册到 runtime manager 并注入进化
+  executor（`UpdateLiveDAG`）供结构补丁作用——但**不**编译进 task fabric。
+  Agent 拓扑不是工作任务；只有 session/plan 图才编译成可执行任务。
+- **Shadow 闸**：sampler 对 `shadow.min_samples` 轮 Prime 使用不相交 replay 窗口；
+  精确平局从 decisive 计数中剔除。证据抽样走 `TieredScorer.ScoreEvidence`（绕过
+  代内 fitness 缓存，独立抽样、计预算），预算为**专属** `max(4, MaxLLMCallsPerGeneration/4)`，
+  每次 Prime 重置——population 评分无法饿死门采样。仅当 evaluator 无独立 scorer
+  时 serve 才安装 ReplayScorer；`evolution.llm_scoring.enabled=true` 时保留
+  ScoreEvidence 路径。判决：decisive < MinSamples 且 rollback 已武装 → 门 **skip**
+  （快照 `shadow_gate_skip_reason` 记录原因）；未武装维持 fail-closed；decisive
+  证据表明候选失败（胜率低于阈值）时无论武装与否一律拒绝。
 
 {{< maturity "Beta" >}}

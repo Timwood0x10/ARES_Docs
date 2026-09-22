@@ -148,7 +148,7 @@ func (r *Registry) Count(event Event) int
 - `internal/llm` 通过 `llm.WithCallbacks` 注入 `Emitter`，并在 `Generate`、
   `GenerateStream` 与 `Chat` 中发射 `EventLLMStart` / `EventLLMEnd` /
   `EventLLMError`。
-- `internal/agents/leader` 与 `internal/agents/sub` 通过
+- `internal/agents` 与 `internal/agents/sub` 通过
   `WithCallbacks` / `SetCallbacks` 接收 `Emitter`，发射智能体与工具生命周期事件。
 - `internal/ares_bootstrap` 通过 `NewCallbackRegistry`、
   `NewLLMClientWithCallbacks`、`WireTaskExecutorCallbacks` 与

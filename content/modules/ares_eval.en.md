@@ -5,7 +5,7 @@ weight: 220
 maturity: "Beta"
 ---
 
-The `internal/ares_eval` package is ARES's evaluation and benchmarking
+The `internal/runtime/eval` package is ARES's evaluation and benchmarking
 framework. It loads test suites, runs them against an agent, scores the
 results with pluggable evaluators (exact match, keyword presence, tool
 usage, LLM-as-judge, dimension-aware judge), and produces Markdown/JSON
@@ -61,7 +61,7 @@ flowchart TD
 ## External interfaces
 
 ```go
-// internal/ares_eval
+// internal/runtime/eval
 type Duration time.Duration  // YAML/JSON-unmarshalable duration
 
 type TestCase struct {
@@ -213,7 +213,7 @@ func (g *ReportGenerator) GenerateJSON(suite TestSuite, results []TestResult, sc
 func (g *ReportGenerator) SaveReport(path string, content string) error
 func RunEvaluation(ctx context.Context, loader *Loader, runner TestRunner, evaluator Evaluator, suitePath string) ([]TestResult, [][]EvalScore, error)
 
-// internal/ares_eval/service
+// internal/runtime/eval/service
 type Service struct { /* unexported */ }
 type Option func(*Service)
 func WithAgentExecutor(exec ares_eval.AgentExecutor) Option
@@ -341,7 +341,7 @@ func (h *Handler) HandleGetComparison(w http.ResponseWriter, r *http.Request)
 5. **Persist results to PostgreSQL.** Implement `EvalResultRepository`
    (or use `NewPGEvalResultRepository`), construct `service.NewService(repo,
    WithAgentExecutor(exec))`, and expose it via `service.NewHandler(svc)`.
-   Wire the handler routes in `api/router` under `/api/v1/eval/...`.
+   Wire the handler routes in `cmd/ares` under `/api/v1/eval/...`.
 6. **Run end-to-end from a suite file.** Call `RunEvaluation(ctx,
    NewLoader(), runner, evaluator, "suite.yaml")` to load, run, and score
    in one step; feed the returned slices to `ReportGenerator`.

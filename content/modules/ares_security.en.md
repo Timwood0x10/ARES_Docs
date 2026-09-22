@@ -155,4 +155,18 @@ constants remain in English in both pages.
 integrated into the logging/dashboard paths, and has a stable API with no
 experimental markers.
 
+
+## Serve HTTP control-plane credential gate
+
+- Credential precedence for serve HTTP gates: `security.api_key` when set,
+  else `llm.api_key`. Both empty → the write gate denies every request with
+  401, loopback included (deny-by-default).
+- Read gate (`GET /api/tasks/{id}`, introspect JSON, tools list): once any
+  credential layer is configured (JWT / api key / introspect token) every
+  client must present one; loopback-open read applies only when no layer
+  exists.
+- `ares init` generates a random `security.api_key` into the project ares.yaml
+  (file mode 0600). `Config.Redacted()` masks `security.api_key` alongside
+  JWT secrets and arena keys.
+
 {{< maturity "Production" >}}

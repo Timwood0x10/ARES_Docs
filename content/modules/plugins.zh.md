@@ -6,7 +6,7 @@ maturity: "Production"
 ---
 
 `plugins` 包承载 ARES 的插件。当前唯一的插件是 `resurrection`
-（`internal/plugins/resurrection`），它是一个监督器，通过 `HealthChecker`
+（`internal/runtime`），它是一个监督器，通过 `HealthChecker`
 监控 Agent，并在其失败时自动重建。它仅依赖少量接口，因此任何满足 `base.Agent`
 的 Agent 类型均可被监督。
 

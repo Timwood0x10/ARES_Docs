@@ -5,7 +5,7 @@ weight: 30
 maturity: "Production"
 ---
 
-The `tools` module spans `api/tools` (the public `Tool` interface, `Registry`,
+The `tools` module spans `internal/apitools` (re-exported via `sdk`/`api` as `tools`) (the public `Tool` interface, `Registry`,
 `ToolFunc`, and re-exports of the planner), `internal/tools/resources` (the
 internal `core.Registry` and builtin tool implementations), and
 `internal/tools/planner` (the intent-based capability planner and execution
@@ -144,7 +144,7 @@ func NewBridge(r *Registry, p *Planner) (*Bridge, error)
 - `Registry.PlannerProvider()` returns a `RegistryPlannerProvider` that
   satisfies `planner.ToolProvider` via structural typing (`ListTools`,
   `GetToolCapabilities`), so the planner can resolve capabilities without
-  importing `api/tools`.
+  importing `internal/apitools` (re-exported via `sdk`/`api` as `tools`).
 - `tools.NewPlanner(r)` wires `NewRuleBasedAnalyzer` ->
   `NewCapabilityPlanner` -> `NewToolResolver` -> `NewEvidenceScorer` ->
   `NewExecutionPlanner`, backed by a `MemoryEvidenceStore`.
@@ -191,5 +191,15 @@ Production. The module is covered by `tools_test.go`,
 `planner_test.go`, `bridge_test.go`, `evidence_test.go`, `dag_test.go`, and
 `integration_test.go`, is integrated into the SDK via
 `sdk.WithTool`/`runtime.RegisterTool`, and ships no experimental markers.
+
+
+## file_tools sandbox (serve path)
+
+`tools.file_sandbox_dir` in ares.yaml roots the file_tools path-traversal
+sandbox — the directory agents may read/write. Empty (default) falls back to
+a process-PRIVATE temp dir via `ResolveFileToolsAllowedDir`, NOT the working
+directory: agents served from a repo cannot touch that repo (or any project
+data) until the key points at the intended workspace. Denied paths fail with
+an error naming the config key. `ares init` docs and quick-start cover the key.
 
 {{< maturity "Production" >}}

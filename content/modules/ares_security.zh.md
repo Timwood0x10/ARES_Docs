@@ -146,4 +146,15 @@ func (l *SafeLogger) Logf(format string, args ...interface{})
 `ares_security` 由 `sanitizer_test.go` 覆盖。它无依赖、已集成进日志/仪表盘路径,
 API 稳定且无实验性标记。
 
+
+## Serve HTTP 控制面凭证门
+
+- serve HTTP 门凭证优先级：`security.api_key`（若设置），否则 `llm.api_key`。
+  两者皆空 → write 门对所有请求 401（含 loopback，deny-by-default）。
+- 读门（`GET /api/tasks/{id}`、introspect JSON、tools 列表）：配置了任一凭证层
+  （JWT / api key / introspect token）后所有客户端必须携带凭证；仅当无任何
+  凭证层时 loopback 读开放。
+- `ares init` 向项目 ares.yaml 生成随机 `security.api_key`（文件模式 0600）。
+  `Config.Redacted()` 与 JWT 密钥、arena 密钥一同脱敏 `security.api_key`。
+
 {{< maturity "Production" >}}

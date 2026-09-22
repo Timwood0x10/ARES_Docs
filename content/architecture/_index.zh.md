@@ -10,7 +10,8 @@ ARES 采用分层组织。`sdk` 包是唯一入口；它拥有的 `Runtime` 将 
 
 ## 分层模型
 
-运行时按七层组织。每个 `internal/*` 包都是单一组件,下图一个不落。
+运行时按七层组织。下图为源码树中真实存在的主要运行时包；逻辑模块若位于
+嵌套目录，标注真实路径（例如 `taskfabric` 位于 `internal/fabric/task`）。
 箭头方向为编译期/运行期依赖方向(调用方 → 被调用方)。
 
 ```mermaid
@@ -18,52 +19,51 @@ flowchart TD
     %% L7 — 入口面
     Entry["入口面<br/>cmd/ares (serve / start / status)<br/>sdk.NewRuntime · api/ 公开契约"]
 
-    %% L6 — 系统控制面
-    SysCtrl["系统控制面<br/>system_runtime — Registry · TopologicalOrder<br/>Orchestrator (Constructed→Bound→Started→Ready)<br/>Snapshot/IsReady 状态 API"]
-    Shut["优雅停机<br/>ares_shutdown — 分阶段 CallbackRegistry"]
+    %% L6 — 装配与系统控制面
     Boot["装配根<br/>ares_bootstrap — serve/start/SDK 单一 Bootstrap"]
+    SysCtrl["系统控制面 (位于 kernel)<br/>kernel.Registry · TopologicalOrder<br/>Orchestrator (Constructed→Bound→Started→Ready)<br/>Snapshot/IsReady — 原 system_runtime"]
+    Shut["优雅停机<br/>ares_shutdown — 分阶段 CallbackRegistry"]
 
-    %% L5 — ARES Kernel (三支柱 + 恢复)
+    %% L5 — ARES Kernel (调度内核 + 三支柱 + 恢复)
     KernelSub["ARES Kernel"]
-    Scheduler["Scheduler 支柱<br/>taskfabric — durable Task<br/>租约 fencing 状态机<br/>RunQuantum · Score · Steal"]
-    Lifecycle["Lifecycle 支柱<br/>agentfabric — disposable Agent<br/>Spawn/Suspend/Retire/Kill/Recover<br/>3 层上下文 · P5 准入"]
-    IPC["IPC 支柱<br/>agentipc — peer Bus<br/>Send/Request/Reply/Delegate<br/>Handoff/Subscribe/Broadcast"]
-    Recovery["Kernel 恢复<br/>aresrecovery — 租约过期→重排队<br/>崩溃恢复 (Agent 死亡 ≠ Task 死亡)"]
+    KSch["kernel.Scheduler — 唯一调度决策点<br/>Schedule→Acquire→RunQuantum<br/>executor 注册表 · 负载跟踪 · drain 上限"]
+    Scheduler["Scheduler 支柱 — taskfabric (internal/fabric/task)<br/>durable Task · 租约 fencing 状态机<br/>RunQuantum · Score · Steal"]
+    Lifecycle["Lifecycle 支柱 — agentfabric (internal/fabric/agent)<br/>disposable Agent · Spawn/Suspend/Retire/Kill/Recover<br/>3 层上下文 · P5 准入"]
+    IPC["IPC 支柱 — agentipc<br/>peer Bus · Send/Request/Reply/Delegate<br/>Handoff/Subscribe/Broadcast"]
+    Recovery["Kernel 恢复 — aresrecovery<br/>租约过期→重排队<br/>崩溃恢复 (Agent 死亡 ≠ Task 死亡)"]
 
     %% L4 — 执行引擎
     ExecSub["执行引擎"]
-    AgentLoop["agentloop — ReAct 引擎<br/>iterate→generate→tool→feed-back"]
+    AgentRT["agentruntime — 共享 L2 执行核<br/>Sessions · Submit · ExecutionConfig<br/>planprojection 编译路径"]
     Agents["agents — leader/sub + peer<br/>StrategySource · Handoff"]
-    Workflow["workflow — 统一 DAG Runner<br/>spec IR · edge-activation scheduler<br/>PatchQueue · checkpoint/resume"]
-    Arena["ares_arena — 混沌工程<br/>故障注入 · regression tester"]
-    Flight["ares_flight — 实验记录<br/>fitness trace · release harness"]
+    Workflow["workflow (internal/fabric/task/workflow)<br/>MutableDAG · edge-activation<br/>PatchQueue · checkpoint/resume"]
+    Arena["arena (internal/runtime/arena)<br/>混沌故障注入 · regression"]
+    Flight["flight (internal/runtime/observability/flight)<br/>fitness trace · release harness"]
 
     %% L3 — 进化与学习
     EvolSub["进化与学习"]
-    Evol["ares_evolution — GA + genome/diff<br/>coordinator · patch · strategy store"]
-    Exp["ares_experience — 冲突解决<br/>store simply, retrieve smartly"]
-    Skills["ares_skills — Capability Fabric<br/>SkillCatalog · 懒加载 MCP · 经验先验"]
-    Eval["eval — verdict + dimension 评分<br/>evidence-based (非标量)"]
+    Evol["ares_evolution (internal/runtime/ares_evolution)<br/>GA + genome/diff · coordinator · patch"]
+    Exp["experience (internal/runtime/memory/experience)<br/>冲突解决 · ranking"]
+    Skills["ares_skills (internal/runtime/protocol/skills)<br/>SkillCatalog · 懒加载 MCP · 经验先验"]
+    Eval["eval (internal/runtime/eval)<br/>verdict + dimension 评分"]
     Evidence["evidence — 通用数据原语<br/>Append/Query/Aggregate"]
-    Archive["ares_archive — 轮次摘要<br/>RoundRecord · 保留优先级 P0–P3"]
+    Archive["archive (internal/runtime/archive)<br/>RoundRecord · 保留优先级 P0–P3"]
 
     %% L2 — 基础设施服务
     InfraSub["基础设施服务"]
     Events["ares_events — EventStore<br/>compactable · integrity verify · task.* 事件"]
-    Memory["ares_memory — MemoryManager<br/>session/messages · RAG · distillation"]
+    Memory["memory (internal/runtime/memory)<br/>session/messages · RAG · distillation"]
     Knowledge["knowledge — AKG Fabric<br/>KnowledgeObject · GraphProvider · 3 层"]
-    MCP["ares_mcp — MCPManager<br/>stdio/sse transports · 懒激活"]
+    MCP["ares_mcp (internal/runtime/protocol/mcp)<br/>MCPManager · stdio/sse · 懒激活"]
     Tools["tools — 工具注册表 + 来源<br/>builtin · envcap · toolsource"]
     Callbacks["ares_callbacks — BridgeEventStore<br/>callback↔event 统一"]
-    Protocol["ares_protocol — 线协议<br/>(预留)"]
+    Protocol["protocol (internal/runtime/protocol)<br/>适配器地图: mcp / skills / ahp"]
     Security["ares_security — sanitizer<br/>SSRF allowlist · 输入卫生"]
     Ratelimit["ares_ratelimit — limiter<br/>rate/burst/token bucket"]
-    Observ["ares_observability — metrics+trace<br/>OTLP exporter · 健康探针"]
-    CtxUtil["ares_ctxutil — detached context<br/>labelled context · bg-task 统计"]
+    Observ["observability (internal/runtime/observability)<br/>metrics+trace · OTLP · cost dashboard"]
+    CtxUtil["ctxutil (internal/runtime/ctxutil.go)<br/>labelled context · bg-task 统计<br/>package runtime"]
     Discovery["discovery — provider 插件<br/>identity merge · health verify"]
-    Detector["detector — 零配置探针<br/>本地端口 · env vars · LLM provider"]
-    Dashboard["dashboard — 统一 API v2<br/>/agents · /mcp · /ws realtime"]
-    Integr["ares_integration — e2e harness<br/>event-driven distillation 测试"]
+    Dashboard["dashboard API — cmd/ares serve<br/>observability 读侧 · /api · /ws"]
     Storage["storage — search result DTO<br/>存储抽象"]
     Scoreutil["scoreutil — ClampUnit 数学<br/>共享评分助手"]
     Truncate["truncate — WithEllipsis<br/>共享截断助手"]
@@ -79,6 +79,7 @@ flowchart TD
     Entry --> Boot
     Entry --> SysCtrl
     Boot --> SysCtrl
+    Boot --> KSch
     Boot --> Scheduler
     Boot --> Lifecycle
     Boot --> IPC
@@ -88,23 +89,22 @@ flowchart TD
     Boot --> InfraSub
     Boot --> FoundSub
     SysCtrl --> Shut
+    SysCtrl --> KSch
     SysCtrl --> Scheduler
     SysCtrl --> Lifecycle
     SysCtrl --> IPC
 
-    Scheduler --> AgentLoop
+    KSch --> Scheduler
+    KSch --> Lifecycle
+    Scheduler --> AgentRT
     Scheduler --> Agents
     Lifecycle --> Agents
     IPC --> Agents
     Recovery --> Scheduler
     Recovery --> Lifecycle
 
-    AgentLoop --> Events
-    AgentLoop --> Memory
-    AgentLoop --> MCP
-    AgentLoop --> Tools
-    AgentLoop --> Evol
-    Agents --> Workflow
+    AgentRT --> Events
+    AgentRT --> Workflow
     Agents --> Events
     Agents --> Memory
     Workflow --> Events
@@ -129,9 +129,8 @@ flowchart TD
     Tools --> Core
     Callbacks --> Events
     Discovery --> Events
-    Detector --> Discovery
     Dashboard --> Events
-    Integr --> Events
+    Dashboard --> Observ
     Observ --> Events
     Ratelimit --> Core
     Security --> Core
@@ -145,11 +144,12 @@ flowchart TD
     Core --> Errors
 
     %% cluster 收拢
+    KernelSub ~~~ KSch
     KernelSub ~~~ Scheduler
     KernelSub ~~~ Lifecycle
     KernelSub ~~~ IPC
     KernelSub ~~~ Recovery
-    ExecSub ~~~ AgentLoop
+    ExecSub ~~~ AgentRT
     ExecSub ~~~ Agents
     ExecSub ~~~ Workflow
     ExecSub ~~~ Arena
@@ -172,9 +172,7 @@ flowchart TD
     InfraSub ~~~ Observ
     InfraSub ~~~ CtxUtil
     InfraSub ~~~ Discovery
-    InfraSub ~~~ Detector
     InfraSub ~~~ Dashboard
-    InfraSub ~~~ Integr
     InfraSub ~~~ Storage
     InfraSub ~~~ Scoreutil
     InfraSub ~~~ Truncate
@@ -186,15 +184,19 @@ flowchart TD
 
 ### 层级图例
 
-| 层 | 包 | 角色 |
+| 层 | 包（真实路径） | 角色 |
 | --- | --- | --- |
 | L7 入口面 | `cmd/ares`、`sdk`、`api/` | CLI 命令、`sdk.NewRuntime` 工厂、公开契约。 |
-| L6 系统控制面 | `system_runtime`、`ares_shutdown`、`ares_bootstrap` | 组件注册表、逆拓扑生命周期编排、分阶段停机、单一装配根。 |
-| L5 ARES Kernel | `taskfabric`、`agentfabric`、`agentipc`、`aresrecovery` | 三支柱(Scheduler / Lifecycle / IPC)加独立的 Recovery 子系统;**Agent 死亡 ≠ Task 死亡**。 |
-| L4 执行引擎 | `agentloop`、`agents`、`workflow`、`ares_arena`、`ares_flight` | ReAct 循环、leader/sub + peer 智能体、统一 DAG Runner、混沌 arena、实验 flight recorder。 |
-| L3 进化与学习 | `ares_evolution`、`ares_experience`、`ares_skills`、`eval`、`evidence`、`ares_archive` | GA + genome/diff 进化、经验冲突解决、Capability Fabric、evidence-based 评估、轮次归档。 |
-| L2 基础设施服务 | `ares_events`、`ares_memory`、`knowledge`、`ares_mcp`、`tools`、`ares_callbacks`、`ares_protocol`、`ares_security`、`ares_ratelimit`、`ares_observability`、`ares_ctxutil`、`discovery`、`detector`、`dashboard`、`ares_integration`、`storage`、`scoreutil`、`truncate`、`logger`、`ares_config` | EventStore、memory/RAG、AKG Fabric、MCP manager、工具注册表、callbacks、线协议、安全、限流、可观测、context utils、服务发现、零配置探测、dashboard API、e2e harness、存储/搜索 DTO、评分数学、截断、结构化日志、配置。 |
-| L1 基础 | `core`、`errors` | 共享 DTO 与值类型、结构化错误分类。 |
+| L6 装配与系统控制面 | `ares_bootstrap`、`ares_shutdown`、控制面位于 `internal/kernel`（`Registry`、`Orchestrator`） | 单一装配根、分阶段停机、组件注册表、逆拓扑生命周期编排、状态快照。原 `system_runtime` 包已统一进 `internal/kernel`。 |
+| L5 ARES Kernel | `internal/kernel`（Scheduler + 控制面）、`internal/fabric/task`（包 `taskfabric`）、`internal/fabric/agent`（包 `agentfabric`）、`internal/agentipc`、`internal/aresrecovery` | 唯一调度决策点（`Schedule→Acquire→RunQuantum`）、持久化 Task 基底、可丢弃 Agent 生命周期、对等 IPC、租约过期恢复；**Agent 死亡 ≠ Task 死亡**。 |
+| L4 执行引擎 | `internal/agentruntime`、`internal/agents`、`internal/fabric/task/workflow`、`internal/runtime/arena`、`internal/runtime/observability/flight` | 共享 L2 会话执行 + planprojection、leader/sub + peer 智能体、MutableDAG 工作流 Runner、混沌 arena、flight recorder。（历史包 `internal/agentloop` 已退役；见 agentloop 模块页。） |
+| L3 进化与学习 | `internal/runtime/ares_evolution`、`internal/runtime/memory/experience`、`internal/runtime/protocol/skills`、`internal/runtime/eval`、`internal/evidence`、`internal/runtime/archive` | GA + genome/diff 进化、经验冲突解决、Capability Fabric、evidence-based 评估、轮次归档。 |
+| L2 基础设施服务 | `internal/ares_events`、`internal/runtime/memory`、`internal/knowledge`、`internal/runtime/protocol/mcp`、`internal/tools`、`internal/ares_callbacks`、`internal/runtime/protocol`、`internal/ares_security`、`internal/ares_ratelimit`、`internal/runtime/observability`、`internal/runtime/ctxutil.go`（包 `runtime`）、`internal/discovery`、dashboard API 位于 `cmd/ares` + observability、`internal/storage`、`internal/scoreutil`、`internal/truncate`、`internal/logger`、`internal/ares_config` | EventStore、memory/RAG、AKG Fabric、MCP manager、工具注册表、callbacks、协议适配器、安全、限流、可观测、context 助手、服务发现、observability 仪表盘 API、存储/搜索 DTO、评分数学、截断、结构化日志、配置。 |
+| L1 基础 | `internal/core`、`internal/errors` | 共享 DTO 与值类型、结构化错误分类。 |
+
+注：`llm` / `llmservice`、`mcpclient`、`tenantctx`、`feedback`、`introspect`、
+`evoapi`、`embedding` 等支撑包也存在于 `internal/` 下，为保持分层图可读而
+未画入图中——它们不是幽灵节点。
 
 ## 请求流程
 
@@ -213,32 +215,41 @@ flowchart TD
 
 ## ARES Kernel —— Agent OS Runtime
 
-从 0.3.0 起运行时收敛为 **ARES Kernel**：三大支柱（Scheduler、Lifecycle、
-IPC）加上按依赖顺序启停的控制面。核心不变量是 **Agent 死亡 ≠ Task
-死亡**——`Task` 是 durable 的（通过租约 fencing 与保留的 checkpoint 在
-owner 死亡后存活），`Agent` 是 disposable 的。智能体是同级认知进程
-（A ≡ B ≡ C）；父子关系仅为溯源，不构成权限层级。
+从 0.3.0 起运行时收敛为 **ARES Kernel**：调度内核（`internal/kernel`）加
+三大织物/IPC 支柱（Scheduler `taskfabric`、Lifecycle `agentfabric`、IPC
+`agentipc`）与恢复（`aresrecovery`）。原独立 `system_runtime` 包中的控制面
+半壁（组件 `Registry`、`Orchestrator`、`TopologicalOrder`、`Snapshot` /
+`IsReady`）现位于 `internal/kernel`，由 `ares_bootstrap` 装配。核心不变量是
+**Agent 死亡 ≠ Task 死亡**——`Task` 是 durable 的（通过租约 fencing 与保留的
+checkpoint 在 owner 死亡后存活），`Agent` 是 disposable 的。智能体是同级认知
+进程（A ≡ B ≡ C）；父子关系仅为溯源，不构成权限层级。
 
 ```mermaid
 flowchart TD
-    SR["system_runtime<br/>component registry + Orchestrator"] --> TF["taskfabric<br/>Scheduler pillar"]
-    SR --> AF["agentfabric<br/>Lifecycle pillar"]
-    SR --> IP["agentipc<br/>IPC pillar"]
+    SR["kernel 控制面<br/>Registry + Orchestrator（原 system_runtime）"] --> TF["taskfabric (internal/fabric/task)<br/>Scheduler 支柱"]
+    SR --> AF["agentfabric (internal/fabric/agent)<br/>Lifecycle 支柱"]
+    SR --> IP["agentipc<br/>IPC 支柱"]
+    KS["kernel.Scheduler<br/>Schedule→Acquire→RunQuantum"] --> TF
+    KS --> AF
     TF -- "Schedule + Acquire + Quantum" --> AF
     IP -- "Handoff / Delegate / Broadcast" --> AF
     IP -- "peer task transfer" --> TF
     AF -- "Candidate{Capabilities,Load,Confidence,Priority}" --> TF
 ```
 
-| 支柱 | 包 | 角色 |
+| 支柱 | 包（真实路径） | 角色 |
 | --- | --- | --- |
-| Scheduler | `internal/taskfabric` | 持久化意图 `Task` 基底：租约 fencing 状态机、执行 quantum（`RunQuantum`）、能力感知评分（`Score = capability_overlap × (1−load) × confidence × (1+priority)`）、工作窃取、`CheckExpiredLeases` 崩溃恢复。 |
-| Lifecycle | `internal/agentfabric` | 可丢弃执行 `Agent` 基底：`Spawn`/`Suspend`/`Resume`/`Retire`/`Kill`/`Recover` 生命周期、三层上下文隔离（Task Shared / Agent Private / IPC）、P5 资源准入、可独立 checkpoint 的 `CognitiveState`。 |
-| IPC | `internal/agentipc` | 对等消息总线：`Send`/`Request`/`Reply`/`Delegate`/`Handoff`/`Subscribe`/`Broadcast`、高级协作模式（委托/流水线/编排）、带 shadow-mode 等价验证的双轨调度策略。 |
-| 控制面 | `internal/system_runtime` | 系统级控制面：组件 `Registry`、依赖感知 `TopologicalOrder`（Kahn）、逆拓扑运行 `Constructed → Bound → Started → Ready` 且拓扑停机的 `Orchestrator`、`Snapshot()` / `IsReady()` 状态 API。 |
+| 调度内核 | `internal/kernel` | 唯一做调度决策的地方：quantum 排水（`Schedule→Acquire→RunQuantum`）、executor 注册/评分、负载跟踪、租约心跳、drain 上限、混合池、决策记录；同时承载组件控制面（`Registry` / `Orchestrator`）。 |
+| Scheduler 支柱 | `internal/fabric/task`（包 `taskfabric`） | 持久化意图 `Task` 基底：租约 fencing 状态机、执行 quantum（`RunQuantum`）、能力感知评分（`Score = capability_overlap × (1−load) × confidence × (1+priority)`）、工作窃取、`CheckExpiredLeases` 崩溃恢复。 |
+| Lifecycle 支柱 | `internal/fabric/agent`（包 `agentfabric`） | 可丢弃执行 `Agent` 基底：`Spawn`/`Suspend`/`Resume`/`Retire`/`Kill`/`Recover` 生命周期、三层上下文隔离（Task Shared / Agent Private / IPC）、P5 资源准入、可独立 checkpoint 的 `CognitiveState`。 |
+| IPC 支柱 | `internal/agentipc` | 对等消息总线：`Send`/`Request`/`Reply`/`Delegate`/`Handoff`/`Subscribe`/`Broadcast`、高级协作模式（委托/流水线/编排）、带 shadow-mode 等价验证的双轨调度策略。 |
+| 恢复 | `internal/aresrecovery` | 租约过期→重排队；崩溃恢复使 **Agent 死亡 ≠ Task 死亡**；执行归因及相关追踪器。 |
+| 控制面 | `internal/kernel`（由 `internal/ares_bootstrap` 装配） | 系统级控制面：组件 `Registry`、依赖感知 `TopologicalOrder`（Kahn）、逆拓扑运行 `Constructed → Bound → Started → Ready` 且拓扑停机的 `Orchestrator`、`Snapshot()` / `IsReady()` 状态 API。原为包 `system_runtime`。 |
 
-专用模块页见 [taskfabric](../modules/taskfabric/)、
+专用模块页见 [kernel](../modules/kernel/)、[taskfabric](../modules/taskfabric/)、
 [agentfabric](../modules/agentfabric/)、[agentipc](../modules/agentipc/)、
+[aresrecovery](../modules/aresrecovery/)、
+[ares_bootstrap](../modules/ares_bootstrap/)、
 [system_runtime](../modules/system_runtime/)。
 
 ## 模块协作
@@ -248,17 +259,44 @@ flowchart TD
 - **sdk ↔ internal/***：SDK 是唯一直接导入内部包的层；`api/` 定义公开契约。
 - **agents ↔ llmservice**：智能体循环在有工具时调用 `Service.Chat`，否则
   调用 `Service.Generate`。
-- **knowledge ↔ ares_memory**：`KnowledgeRetriever` 实现 `ContextRetriever`
+- **knowledge ↔ memory**：`KnowledgeRetriever` 实现 `ContextRetriever`
   接口，使 AKG 事实注入记忆 RAG。
-- **ares_events ↔ ares_experience**：事件触发蒸馏流水线，回写到经验存储与
+- **ares_events ↔ experience**：事件触发蒸馏流水线，回写到经验存储与
   知识存储。
 - **ares_evolution ↔ knowledge**：进化协调器可通过 `WithPatchRegistry`
   提交影响运行中知识运行时的补丁。
-- **ARES Kernel**：`taskfabric` 调度、`agentfabric` 管生命周期、`agentipc`
-  承载对等消息、`system_runtime` 通过 `ares_bootstrap` 按依赖顺序编排上述
-  四者及更广的组件图。
+- **ARES Kernel**：`internal/kernel` 调度（唯一调度点）、`taskfabric` 持有
+  durable Task、`agentfabric` 管生命周期、`agentipc` 承载对等消息、
+  `ares_bootstrap` 将组件图注册到 kernel 的 `Registry` / `Orchestrator`，
+  使各入口（`serve`、`start`、SDK）观察到同一条依赖有序的生命周期。
 
 ## 扩展方式
 
 具体的新增 LLM 供应商、自定义工具、知识存储与策略源的指引，请参见
 [扩展指南](../guides/extend/)。
+
+注（2026-09 核实）：live agent DAG（agents.peers 拓扑）注册在 runtime manager
+上、供进化结构补丁作用，但**不**编译进 task fabric——agent 拓扑不是可执行的
+工作任务。task fabric 的编译只覆盖 session/plan 图。
+
+注（2026-09 核实）：包路径已对照源码树——`taskfabric` 位于
+`internal/fabric/task`，`agentfabric` 位于 `internal/fabric/agent`，系统控制面
+（`Registry`/`Orchestrator`）位于 `internal/kernel`（原 `system_runtime` 按
+`internal/kernel/doc.go` 统一），memory/eval/archive/arena/flight/skills/MCP/
+observability 等位于 `internal/runtime/...`。自旧图中移除的幽灵节点：
+`detector`（已从产品树移除）、`ares_integration`、`ares_experience`、
+`ares_ctxutil`（助手实为 `internal/runtime/ctxutil.go` 中的文件，包
+`runtime`），以及独立的 `internal/dashboard` 包（dashboard HTTP 面由
+`cmd/ares` 配合 observability 提供）。
+
+### 动态图（MutableDAG，现行源码树）
+
+live 图对象是 `MutableDAG`（`internal/fabric/task/workflow/engine`）：session
+L2 图在 planner 作用下按量子生长（plan/tool/answer 节点），受 `max_plan_depth`
+（默认 10；触顶强制生成 content-less answer 节点——合成或诚实缺口体，绝非
+守卫文案）约束。`planprojection.CompileCoordinator`
+（`internal/fabric/planprojection`）将变更的图增量编译进
+task fabric（`PlanStep.Capability ← Step.AgentType`；编译溯源
+`generation`/`dag_version`/`compile_id` 在 `/api/evolution/lifecycle` 可见）。
+进化结构补丁原地变更 DAG 对象；live agent DAG（agents.peers 拓扑）不编译进
+task fabric。

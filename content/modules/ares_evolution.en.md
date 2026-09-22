@@ -10,9 +10,9 @@ maturity: "Beta"
 ## Responsibility
 
 `ares_evolution` is the autonomous evolution layer for ARES. It spans two
-packages: `internal/ares_evolution` (the legacy GA dream-cycle stack, scheduler,
+packages: `internal/runtime/ares_evolution` (the legacy GA dream-cycle stack, scheduler,
 strategy stores, guardrails, shadow evaluator, rollback policy, and the
-high-level `service.Service`) and `internal/evolution` (the new genome/diff/
+high-level `service.Service`) and `internal/runtime/evolution` (the new genome/diff/
 patch/coordinator stack plus the LLM adapter). Together they mutate agent
 decision strategies, evaluate candidates via arena regression, record
 genealogy, and promote accepted mutations to the live runtime as universal
@@ -75,7 +75,7 @@ type Strategy struct {
     CreatedAt     time.Time      `json:"created_at"`
 }
 
-// Core evolution interfaces (internal/ares_evolution/interfaces.go).
+// Core evolution interfaces (internal/runtime/ares_evolution/interfaces.go).
 type MutatorInterface interface {
     Mutate(ctx context.Context, parent Strategy, n int) ([]Strategy, error)
 }
@@ -104,7 +104,7 @@ func DefaultDreamCycleConfig() DreamCycleConfig
 // Scheduler.
 func NewEvolutionScheduler(cb CallbackRegistrar, adapter AdapterRunner, opts ...SchedulerOption) *EvolutionScheduler
 
-// High-level service API (internal/ares_evolution/service).
+// High-level service API (internal/runtime/ares_evolution/service).
 func NewService(cfg *SystemConfig) (*Service, error)
 func DefaultConfig() *SystemConfig
 func (s *Service) Evolve(ctx context.Context, generations int) (*EvolutionResult, error)
@@ -115,7 +115,7 @@ func (s *Service) RunIdleEvolution(ctx context.Context, generations int) error
 func (s *Service) Shutdown()
 func LoadBestStrategy(path string) (*Strategy, error)
 
-// Coordinator + 7 patch sources (internal/evolution/coordinator).
+// Coordinator + 7 patch sources (internal/runtime/evolution/coordinator).
 type PatchSource string
 const (
     SourceGA    PatchSource = "genome" // Genetic Algorithm
@@ -168,10 +168,10 @@ func DefaultPolicy() PolicyGenome
 
 ## Module collaboration
 
-- `internal/ares_evolution` consumes `ares_callbacks`, `ares_events`,
+- `internal/runtime/ares_evolution` consumes `ares_callbacks`, `ares_events`,
   `ares_flight`, `ares_eval`, `ares_experience`, and the `genome`/`mutation`/
   `scoring`/`promotion` subpackages.
-- `internal/evolution/coordinator` depends only on `internal/evolution/patch`,
+- `internal/runtime/evolution/coordinator` depends only on `internal/runtime/evolution/patch`,
   keeping the decision engine decoupled from how patches are generated.
 - `ares_bootstrap.ProvideNewEvolution` wires `genome.Registry` ->
   `diff.Registry` -> `patch.Registry` -> `EvolutionCoordinator` and shares the
@@ -221,5 +221,51 @@ patch types remain in English in both pages.
 `coordinator_test.go`. The GA service API and coordinator are functional and
 tested, but the cross-package wiring and `SystemConfig` surface are still
 evolving, so the module is marked Beta.
+
+
+## Evidence loop and gate semantics (verified against code, 2026-09)
+
+- **Active-strategy seeding**: bootstrap persists the base strategy
+  `bootstrap-root` (Score 0.5) into the StrategyStore only when the store has
+  no active strategy; an existing active (e.g. recovered from Postgres) is
+  never overwritten. `ActiveStrategyManager.Current()` falls back to the
+  durable store when its promote-path cache is empty — the store is the
+  source of truth.
+- **Score write-back**: `aresrecovery.DeterministicScorer` →
+  `strategyScoreAdapter.WriteActiveScore` → StrategyStore. The write-back
+  requires an active strategy (seeded at bootstrap); without one every write
+  fails with "no active strategy" and the GA accumulates no fitness.
+- **EvolutionScheduler TriggerOnIdle (default trigger)**: score window
+  `scoreWindowSize=50`; periodic threshold `periodicEvolutionScoreThreshold=40`
+  (must stay ≤ the window — values above it are unreachable); reliability
+  floor `minScoreCountForReliability=20`; an all-failure window (avg ≤ 0 with
+  count ≥ 20) triggers exploration; a degradation drop ≥ 0.15 also triggers.
+- **Guardrails**: `PreEvolveCheck`'s unevaluated-majority check is EXEMPT at
+  generation 0 (the bootstrap population is unevaluated by definition — the
+  first cycle evaluates it). Established generations (≥ 1) keep the >50%
+  unevaluated block.
+- **Tick evolve runs** execute in an errgroup goroutine with a per-run
+  recover: a panic is logged and the next tick retries (`lastRun` is not
+  advanced on panic).
+- **WorkflowGenome**: serve wiring seeds `AgentPool` with
+  `["ares/plan","ares/answer"]`; `mutateInsertNode`/`mutateReplaceNode` no-op
+  on an empty pool instead of panicking.
+- **Live agent DAG**: the `agents.peers` topology is registered on the
+  runtime manager and injected into evolution executors (`UpdateLiveDAG`) so
+  structure patches act on it — it is NOT compiled into the task fabric.
+  Agent topology is not work; only session/plan graphs compile into
+  executable tasks.
+- **Shadow gate**: the sampler runs `shadow.min_samples` Prime iterations over
+  disjoint replay windows; exact ties are excluded from the decisive count.
+  Evidence draws go through `TieredScorer.ScoreEvidence`, which bypasses the
+  per-generation fitness cache (independent draws, budget counted) on a
+  DEDICATED budget `max(4, MaxLLMCallsPerGeneration/4)` refreshed per Prime —
+  population scoring cannot starve gate sampling. Serve installs the
+  ReplayScorer only when the evaluator has no independent scorer; with
+  `evolution.llm_scoring.enabled=true` the ScoreEvidence path is kept.
+  Verdicts: decisive < MinSamples → the gate SKIPS when rollback is armed
+  (reason recorded on the lifecycle snapshot as `shadow_gate_skip_reason`)
+  and stays fail-closed when disarmed; decisive evidence that the candidate
+  loses (win rate below threshold) rejects regardless of rollback.
 
 {{< maturity "Beta" >}}

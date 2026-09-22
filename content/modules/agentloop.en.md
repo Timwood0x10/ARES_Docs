@@ -5,8 +5,21 @@ weight: 111
 maturity: "Production"
 ---
 
-The `internal/agentloop` package (package `agentloop`) provides the **ReAct
-(reason+act) execution loop** — the core iterative engine that drives an
+> **Status (verified 2026-09 against the source tree):** no `agentloop`
+> package exists (`internal/` has no such directory, and nothing imports
+> one). Live equivalents: the SDK agent run path (`sdk.Agent.Run`) uses the
+> L2 session core — ReAct-era options (`WithHumanInput`, `WithMaxIterations`,
+> `WithToolDiscovery`) no longer shape execution, and `WithHumanInput`
+> returns `ErrHumanInputUnsupported`. Runtime tool discovery lives in
+> `internal/tools/toolsource` (`DiscoverToolsName = "discover_tools"`) with
+> `ToolExpander` in `sdk/discovery.go`; `HumanInputFunc` and `FriendlyErr`
+> remain in `sdk`. `internal/runtime/loop.go` is an evolutionary round-loop
+> plugin (`LoopPlugin`), not a ReAct engine. Source is authoritative; the
+> body below is historical.
+
+
+The `internal/agentloop` package (package `agentloop`) provided the **ReAct
+(reason+act) execution loop** — the core iterative engine that drove an
 agent's reasoning and tool-use cycle. It was extracted from `sdk.Agent.Run`
 into an independently testable unit with mock LLM, mock tools, mock events,
 and mock memory.
@@ -92,8 +105,8 @@ type Engine struct {
 // --- Request / Result ---
 
 type Request struct {
-    Messages     []*core.LLMMessage
-    Tools        []core.Tool
+    Messages     []*llmcore.LLMMessage
+    Tools        []llmcore.Tool
     MaxIter      int
     MaxTokens    int
     Timeout      time.Duration
@@ -118,8 +131,8 @@ type Result struct {
 type HumanInputFunc func(ctx context.Context, toolName string, args map[string]any) (bool, error)
 
 type LLMCaller interface {
-    Generate(ctx context.Context, req *core.GenerateRequest) (*core.GenerateResponse, error)
-    GetProvider() core.LLMProvider
+    Generate(ctx context.Context, req *llmcore.GenerateRequest) (*llmcore.GenerateResponse, error)
+    GetProvider() llmcore.LLMProvider
 }
 
 type ToolExecutor interface {
@@ -127,7 +140,7 @@ type ToolExecutor interface {
 }
 
 type ToolExpander interface {
-    Expand(ctx context.Context, names []string) ([]core.Tool, error)
+    Expand(ctx context.Context, names []string) ([]llmcore.Tool, error)
 }
 
 type EventSink interface {
@@ -144,7 +157,7 @@ func (e *Engine) Run(ctx context.Context, req *Request) (*Result, error)
 
 // --- Helper ---
 
-func FriendlyErr(scope string, provider core.LLMProvider, origErr error) error
+func FriendlyErr(scope string, provider llmcore.LLMProvider, origErr error) error
 ```
 
 ## Key types and methods
@@ -168,12 +181,12 @@ func FriendlyErr(scope string, provider core.LLMProvider, origErr error) error
 - `agentloop` -> `internal/llm` (via `LLMCaller`): generates LLM responses with the full message history and tool definitions.
 - `agentloop` -> `internal/tools` (via `ToolExecutor`): executes tool calls and feeds results back into the loop.
 - `agentloop` -> `internal/ares_events` (via `EventSink`): emits structured events for every LLM call, tool execution, and task completion.
-- `agentloop` -> `internal/ares_memory` (via `MemorySink`): persists structured memory for agent recall across iterations.
-- `agentloop` -> `internal/core` (via `core.LLMMessage`, `core.GenerateRequest`, `core.GenerateResponse`, `core.Tool`, `core.ToolCall`, `core.LLMProvider`): shares core model types.
+- `agentloop` -> `internal/runtime/memory` (via `MemorySink`): persists structured memory for agent recall across iterations.
+- `agentloop` -> `internal/core` (via `llmcore.LLMMessage`, `llmcore.GenerateRequest`, `llmcore.GenerateResponse`, `core.Tool`, `llmcore.ToolCall`, `llmcore.LLMProvider`): shares core model types.
 
 ## Extension points
 
-1. **Replace the LLM backend** by implementing `LLMCaller` with any provider; the engine is provider-agnostic and only depends on `core.GenerateRequest` / `core.GenerateResponse`.
+1. **Replace the LLM backend** by implementing `LLMCaller` with any provider; the engine is provider-agnostic and only depends on `llmcore.GenerateRequest` / `llmcore.GenerateResponse`.
 2. **Add human-in-the-loop approval** by providing a `HumanInputFunc`; the engine pauses before each tool call and waits for the decision.
 3. **Enable runtime tool discovery** by wiring a `ToolExpander`; when the LLM calls `discover_tools`, the engine extracts the requested names, expands them, and injects the definitions into the next turn.
 4. **Instrument the loop** via the `Tracer` field; every significant event (iteration, tool call, discovery) is traced.
@@ -185,6 +198,9 @@ This page is the English reference. A Chinese translation with identical structu
 
 ## Maturity
 
-Production. The package is extracted from production `sdk.Agent.Run` into an independently testable unit with mock LLM, mock tools, mock events, and mock memory. It exposes no experimental markers.
+Not present as a package (historical). No `agentloop` package exists in the
+current tree; this page records the extracted ReAct engine. Live paths
+(`sdk.Agent.Run` L2, `internal/tools/toolsource`, `sdk/discovery.go`) are
+production-tested.
 
 {{< maturity "Production" >}}

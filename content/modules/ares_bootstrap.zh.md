@@ -106,12 +106,12 @@ func SetAllowedConfigDir(dir string) // re-exported security helper from ares_co
 - 消费 `ares_events`、`ares_runtime`、`ares_memory`、`ares_mcp`、
   `ares_callbacks`、`ares_eval`、`ares_experience`、`ares_flight` 来装配
   旧版运行时与进化系统。
-- 驱动 `internal/evolution`(`coordinator`、`diff`、`genome`、`patch`)
-  与 `internal/ares_evolution`(`service`、`scheduler`、`dream_cycle`、
+- 驱动 `internal/runtime/evolution`(`coordinator`、`diff`、`genome`、`patch`)
+  与 `internal/runtime/ares_evolution`(`service`、`scheduler`、`dream_cycle`、
   `genome_wiring`)组成的新版进化栈。
 - 在进化系统与 agent 的 AKF 工具之间共享 `internal/knowledge/runtime`,
-  并使用 `internal/workflow/engine` 作为实时可变 DAG。
-- 可选装配 `internal/evolution/deployment` 实现补丁安全提升。
+  并使用 `internal/fabric/task/workflow/engine` 作为实时可变 DAG。
+- 可选装配 `internal/runtime/evolution/deployment` 实现补丁安全提升。
 
 ## 扩展方式
 
@@ -139,5 +139,19 @@ func SetAllowedConfigDir(dir string) // re-exported security helper from ares_co
 `callback_injection_test.go`、`strategy_adapter_test.go` 与
 `provide_new_evolution_live_memory_test.go` 覆盖。它是 `api/bootstrap` 与
 `cmd/ares serve` 使用的装配入口,无实验性标记。
+
+
+## Evolution 接线事实（2026-09 核实）
+
+- `wireGAEvolution` 仅在 store 无活跃策略时播种基础策略 `bootstrap-root`
+  （Score 0.5）——分数写回与策略源读取从 boot 起就需要目标。已有活跃策略绝不
+  覆盖。
+- `ProvideNewEvolution` 构造 WorkflowGenome 时播种
+  `AgentPool: ["ares/plan","ares/answer"]`（结构体字面量配置会跳过包默认值；
+  空池曾使 mutation 算子 panic）。
+- `buildLiveAgentDAG` + `UpdateLiveDAG` 把 `agents.peers` 拓扑注册到 runtime
+  manager 并注入进化 executor。serve **不**把这个 live agent DAG 编译进 task
+  fabric：agent 拓扑不是工作任务——编译会产生无人可认领的非 L2 能力 READY
+  任务。session/plan 图仍是唯一编译路径。
 
 {{< maturity "Production" >}}

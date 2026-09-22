@@ -1,11 +1,18 @@
 ---
 title: "workflow"
 description: "统一 DAG 运行器，含可序列化 IR、调度器、重试/恢复、HITL、循环与幂等检查点恢复。"
-weight: 100
+weight: 101
 maturity: "Production"
 ---
 
-`internal/workflow` 包是 DAG 工作流的唯一生产执行路径。它定义了可序列化的
+> **状态（2026-09 对照源码树核实）：** 下文描述的 IR/Runner 层不以独立包形式存在。
+> **现行**动态图机制位于 `internal/fabric/task/workflow/engine`
+> （`MutableDAG`、`hitl.go`、`loader.go`）、`internal/fabric/task/workflow/graph`
+> （`scheduler.go`、`patcher.go`），以及 `internal/fabric/planprojection`
+> （向 task fabric 的增量编译）；见本页末尾「现行源码树」一节。以源码为准。
+
+
+`internal/fabric/task/workflow` 包是 DAG 工作流的唯一生产执行路径。它定义了可序列化的
 中间表示（`WorkflowSpec`）、消费它的单一 `Runner`、按拓扑排序就绪节点的
 `Scheduler`，以及用于崩溃恢复的幂等检查点协议。
 
@@ -54,7 +61,7 @@ flowchart TD
 ## 外部接口
 
 ```go
-// internal/workflow
+// internal/fabric/task/workflow
 type NodeID string
 
 type WorkflowSpec struct {
@@ -334,3 +341,30 @@ Production。本模块由 `runner_test.go`、`scheduler.go` 测试、
 `client.WorkflowClient` 接入 SDK，无任何实验性标记。
 
 {{< maturity "Production" >}}
+
+## MutableDAG —— 现行动态图（现行源码树）
+
+位置：`internal/fabric/task/workflow/engine/mutable_dag.go`（`type MutableDAG`）。
+
+- **结构**：由 `engine.Step` 节点（`ID`、`Name`、`AgentType`、`Input`、
+  `DependsOn`、`Metadata`、重试策略）构成的可变 DAG，边操作（`AddNode`、
+  `RemoveNode`、`ReplaceNode`、`AddEdge`、`RemoveEdge`、`SetNodeMetadata`）
+  带环检测；失败的边操作由调用方回滚（回滚模式见 WorkflowGenome 的
+  `mutateSwapNodes`）。`StepIndex()` 返回当前步骤表；`StepSnapshot(id)`
+  是热路径使用的 O(1) 深拷贝读。
+- **Session L2 图**：`agentfabric.plannerCognition` 每个量子在该 MutableDAG
+  内生长一张 session 图——plan 节点、tool 节点与终态 answer 节点。生长深度
+  受 `max_plan_depth`（默认 10）约束；触顶强制生成 content-less answer
+  节点（合成 / 缺口体——见 agentfabric 页）。
+- **向 task fabric 的增量编译**：`planprojection.CompileCoordinator` 订阅图
+  事件，经 `Fabric.CompilePlan`/`CompileNode` 重编译变更的图。投影
+  （`ProjectStep`）：`PlanStep.ID ← Step.ID`、`Capability ← Step.AgentType`、
+  `DependsOn` 复制、payload = `{"input": Step.Input}` 与步骤 metadata 合并
+  （metadata 优先；携带 `session_id`/`tenant_id`）。每次编译产出
+  `CompileRecord`（`generation`、`dag_version`、`compile_id`）——在
+  `/api/evolution/lifecycle` 可见。
+- **与进化的关系**：`WorkflowGenome` 变更 DAG 拓扑（insert/remove/replace/
+  parallelize/serialize/swap/split/merge/set-metadata）；结构补丁作用于注册
+  在 runtime manager 上的 live agent DAG。该 live agent DAG **不**编译进
+  task fabric——agent 拓扑不是可执行的工作任务；只有 session/plan 图会被
+  编译。
